@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>wonik_cobot_v2_bringup</name>
+  <name>wonik_cobot_bringup</name>
   <version>0.1.0</version>
-  <description>Robot-side bringup of the Wonik cobot_v2 AGV (real robot and simulation): robot model, controller configuration, qd_kinematics node, odometry EKF (wheels + IMU), RViz</description>
+  <description>Robot-side bringup of the Wonik AGVs (real robot and simulation), one launch file and config set per robot (cobot_v2, sd): robot model, controller configuration, qd_kinematics node, odometry EKF (wheels + IMU), RViz</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>catkin</buildtool_depend>
 
-  <exec_depend>wonik_cobot_v2_description</exec_depend>
+  <exec_depend>wonik_cobot_description</exec_depend>
   <exec_depend>qd_kinematics</exec_depend>
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>joint_state_controller</exec_depend>

@@ -3,7 +3,7 @@
 # This repository is mounted at /catkin_ws/src/RCI_wonik_robotics, so edits on the host apply
 # immediately. build/ and devel/ stay in the Docker volume "rci_wonik_ws" between runs.
 #   docker/run.sh catkin_make                                         # build (again after C++ changes)
-#   docker/run.sh roslaunch wonik_cobot_v2_bringup gazebo.launch
+#   docker/run.sh roslaunch wonik_gazebo cobot_v2.launch
 #   docker/run.sh rosrun teleop_twist_keyboard teleop_twist_keyboard.py
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${IMAGE:-rci_wonik_noetic:latest}"

@@ -15,8 +15,8 @@
   <exec_depend>gazebo_ros_control</exec_depend>
   <exec_depend>velodyne_gazebo_plugins</exec_depend>
   <exec_depend>controller_manager</exec_depend>
-  <exec_depend>wonik_cobot_v2_bringup</exec_depend>
-  <exec_depend>wonik_cobot_v2_description</exec_depend>
+  <exec_depend>wonik_cobot_bringup</exec_depend>
+  <exec_depend>wonik_cobot_description</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>gazebo_msgs</exec_depend>
   <exec_depend>controller_manager_msgs</exec_depend>

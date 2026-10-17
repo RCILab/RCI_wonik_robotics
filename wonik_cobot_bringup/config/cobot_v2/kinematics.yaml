@@ -1,5 +1,5 @@
 # qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, joint names)
-# is loaded separately from wonik_cobot_v2_description/config/geometry.yaml.
+# is loaded separately from wonik_cobot_description/config/cobot_v2/geometry.yaml.
 # PLACEHOLDER marks values that wait for the drive unit spec from Wonik; nothing here is a confirmed
 # hardware limit.
 control_rate_hz: 100.0

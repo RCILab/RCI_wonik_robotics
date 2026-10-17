@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- cobot_v2 (QD #2 type) robot-side bringup (see base.launch). On the real robot, start it next to the
+     drive unit driver and the IMU driver:
+       roslaunch wonik_cobot_bringup cobot_v2.launch [ekf:=false] -->
+<launch>
+  <arg name="xacro_args" default=""/>
+  <arg name="ekf" default="true"/>
+
+  <include file="$(find wonik_cobot_bringup)/launch/base.launch" pass_all_args="true">
+    <arg name="robot" value="cobot_v2"/>
+  </include>
+</launch>

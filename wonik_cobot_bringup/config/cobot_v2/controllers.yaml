@@ -1,5 +1,5 @@
 # gazebo_ros_control controllers. Joint names must match steer_joints / drive_joints in
-# wonik_cobot_v2_description/config/geometry.yaml.
+# wonik_cobot_description/config/cobot_v2/geometry.yaml.
 joint_state_controller:
   type: joint_state_controller/JointStateController
   publish_rate: 100

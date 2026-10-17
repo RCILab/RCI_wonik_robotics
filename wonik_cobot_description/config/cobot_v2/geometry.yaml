@@ -1,6 +1,6 @@
 # Wonik cobot_v2 (QD #2 type): two steer+drive (QD) units on one diagonal, two passive omni wheels
 # on the other. Measured from cobot_v2_asm.stp / cobot_v2-모형.pdf (received 2026-10-17).
-# Single source of truth: read by urdf/wonik_cobot_v2.urdf.xacro and, via the bringup launch,
+# Single source of truth: read by urdf/cobot_v2.urdf.xacro and, via the bringup launch,
 # by qd_kinematics' kinematics_node.
 #
 # Frame: base_footprint on the floor under the body centre, z up, x = front. "Front" is the end

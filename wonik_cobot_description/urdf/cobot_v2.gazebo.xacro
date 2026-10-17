@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- Gazebo-only part of the cobot_v2 model; included by wonik_cobot_v2.urdf.xacro and ignored outside
+<!-- Gazebo-only part of the cobot_v2 model; included by cobot_v2.urdf.xacro and ignored outside
      Gazebo. Uses the properties g (geometry.yaml) and wheel_r of the including file.
        sim_drive:=kinematic  wheel and caster contacts are frictionless and the qd_kinematic_base plugin
                              (wonik_gazebo) moves the base with the twist that the measured steer angles

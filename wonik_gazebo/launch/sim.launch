@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<!-- A Wonik AGV in Gazebo: world, robot, controllers, the robot's bringup (wonik_cobot_bringup
+     <robot>.launch, as on the real robot) and RViz. All on sim time. Usually started through the
+     robot's own file:
+       roslaunch wonik_gazebo cobot_v2.launch [world:=wonik_hall] [sim_drive:=physics]
+       roslaunch wonik_gazebo sd.launch [world:=wonik_hall]
+       rosrun teleop_twist_keyboard teleop_twist_keyboard.py _repeat_rate:=10      (another terminal)
+     world: a file name in wonik_gazebo/worlds without .world (empty | wonik_hall); world_file
+     takes any path instead.
+     sim_drive: kinematic (default, no wheel slip) | physics (wheel-ground friction), see
+     wonik_cobot_description/urdf/<robot>.gazebo.xacro. -->
+<launch>
+  <arg name="robot"/>
+  <arg name="sim_drive" default="kinematic"/>
+  <arg name="world" default="empty"/>
+  <arg name="world_file" default="$(find wonik_gazebo)/worlds/$(arg world).world"/>
+  <arg name="gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="lidar_gpu" default="false"/>
+  <!-- front depth camera; its images need an X display (rendering) -->
+  <arg name="depth_camera" default="true"/>
+  <!-- odometry: EKF of wheel odometry + IMU (default) or wheel odometry only -->
+  <arg name="ekf" default="true"/>
+  <arg name="x" default="0.0"/>
+  <arg name="y" default="0.0"/>
+  <arg name="yaw" default="0.0"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(arg world_file)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="paused" value="false"/>
+  </include>
+
+  <include file="$(find wonik_cobot_bringup)/launch/$(arg robot).launch">
+    <arg name="xacro_args" value="sim_drive:=$(arg sim_drive) lidar_gpu:=$(arg lidar_gpu) depth_camera:=$(arg depth_camera)"/>
+    <arg name="ekf" value="$(arg ekf)"/>
+  </include>
+
+  <node pkg="gazebo_ros" type="spawn_model" name="spawn_robot" output="screen"
+        args="-urdf -param robot_description -model wonik_$(arg robot) -x $(arg x) -y $(arg y) -z 0.02 -Y $(arg yaw)"/>
+
+  <!-- On the real robot the drive unit driver hosts these controllers instead of gazebo_ros_control. -->
+  <node pkg="controller_manager" type="spawner" name="controller_spawner" output="screen"
+        args="joint_state_controller steer_controller drive_controller"/>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
+        args="-d $(find wonik_cobot_bringup)/rviz/robot.rviz"/>
+</launch>

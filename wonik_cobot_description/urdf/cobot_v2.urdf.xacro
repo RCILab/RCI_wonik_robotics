@@ -1,23 +1,23 @@
 <?xml version="1.0"?>
-<!-- Wonik cobot_v2 (QD #2 type). Geometry comes from config/geometry.yaml; the cobot arm is not modelled.
+<!-- Wonik cobot_v2 (QD #2 type). Geometry comes from config/cobot_v2/geometry.yaml; the cobot arm is not modelled.
      Meshes are visual only (converted from cobot_v2_asm.stp); collisions are primitives.
-     Everything Gazebo-specific is in wonik_cobot_v2.gazebo.xacro (ignored outside Gazebo).
-       xacro wonik_cobot_v2.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] [depth_camera:=false] -->
+     Everything Gazebo-specific is in cobot_v2.gazebo.xacro (ignored outside Gazebo).
+       xacro cobot_v2.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] [depth_camera:=false] -->
 <robot name="wonik_cobot_v2" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <xacro:arg name="geometry" default="$(find wonik_cobot_v2_description)/config/geometry.yaml"/>
+  <xacro:arg name="geometry" default="$(find wonik_cobot_description)/config/cobot_v2/geometry.yaml"/>
   <xacro:arg name="sim_drive" default="kinematic"/>
   <xacro:arg name="lidar_gpu" default="false"/>
   <!-- Gazebo depth camera sensor; it needs an X display (rendering) to produce images -->
   <xacro:arg name="depth_camera" default="true"/>
 
   <xacro:include filename="$(find velodyne_description)/urdf/HDL-32E.urdf.xacro"/>
-  <xacro:include filename="$(find wonik_cobot_v2_description)/urdf/wonik_cobot_v2.gazebo.xacro"/>
+  <xacro:include filename="$(find wonik_cobot_description)/urdf/cobot_v2.gazebo.xacro"/>
 
   <xacro:property name="g" value="${xacro.load_yaml('$(arg geometry)')}"/>
   <xacro:property name="wheel_r" value="${g['wheel_diameter'] / 2.0}"/>
   <xacro:property name="omni_r" value="${g['omni_diameter'] / 2.0}"/>
-  <xacro:property name="mesh_dir" value="package://wonik_cobot_v2_description/meshes"/>
+  <xacro:property name="mesh_dir" value="package://wonik_cobot_description/meshes/cobot_v2"/>
 
   <material name="body_grey"><color rgba="0.70 0.71 0.74 1.0"/></material>
   <material name="qd_red"><color rgba="0.75 0.22 0.18 1.0"/></material>

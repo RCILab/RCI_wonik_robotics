@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>wonik_cobot_v2_description</name>
+  <name>wonik_cobot_description</name>
   <version>0.1.0</version>
-  <description>URDF/xacro, meshes and geometry of the Wonik cobot_v2 AGV (QD #2 type)</description>
+  <description>URDF/xacro, meshes and geometry of the Wonik AGVs, one set per robot: cobot_v2 (QD #2 type) and SD (single drive, virtual model from the drawing until the CAD arrives)</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
 
