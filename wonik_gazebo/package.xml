@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>wonik_gazebo</name>
+  <version>0.1.0</version>
+  <description>Gazebo layer for the Wonik AGVs: simulation launch files and the qd_kinematic_base plugin. Nothing here runs on the real robot.</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>gazebo_ros</depend>
+  <depend>qd_kinematics</depend>
+
+  <exec_depend>gazebo_plugins</exec_depend>
+  <exec_depend>gazebo_ros_control</exec_depend>
+  <exec_depend>velodyne_gazebo_plugins</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>wonik_cobot_v2_bringup</exec_depend>
+  <exec_depend>wonik_cobot_v2_description</exec_depend>
+</package>

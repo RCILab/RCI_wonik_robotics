@@ -1,0 +1,21 @@
+# qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, joint names)
+# is loaded separately from wonik_cobot_v2_description/config/geometry.yaml.
+control_rate_hz: 100.0
+# teleop_twist_keyboard publishes once per key press, so the command is held this long.
+cmd_timeout_sec: 10.0
+odom_frame: odom
+base_frame: base_footprint
+publish_tf: true
+
+linear_acc: 0.10
+linear_dec: 0.25
+max_steer_vel: 1.5
+# Steer joints are continuous in simulation, so the +-(90 + 10) deg band is reachable.
+steer_hysteresis_deg: 10.0
+steer_track_limit: 0.3
+creep_speed_max: 0.08
+
+odom_max_dt: 0.1
+# [x, y, z, roll, pitch, yaw]
+pose_covariance_diagonal: [0.001, 0.001, 1000.0, 1000.0, 1000.0, 0.01]
+twist_covariance_diagonal: [0.001, 0.001, 1000.0, 1000.0, 1000.0, 0.01]

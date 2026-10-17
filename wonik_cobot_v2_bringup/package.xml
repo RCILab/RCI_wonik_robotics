@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>wonik_cobot_v2_bringup</name>
+  <version>0.1.0</version>
+  <description>Robot-side bringup of the Wonik cobot_v2 AGV (real robot and simulation): robot model, controller configuration, qd_kinematics node, RViz</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>wonik_cobot_v2_description</exec_depend>
+  <exec_depend>qd_kinematics</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_state_controller</exec_depend>
+  <exec_depend>position_controllers</exec_depend>
+  <exec_depend>velocity_controllers</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rviz</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+</package>
