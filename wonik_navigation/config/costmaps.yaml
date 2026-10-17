@@ -1,6 +1,8 @@
 # Costmaps of move_base_flex. The robot footprint comes from config/<robot>/footprint.yaml.
 # Both costmaps take obstacles from /scan and the front depth camera, so the global planner plans
-# detours around obstacles that are not in the map.
+# detours around obstacles that are not in the map (navigation.launch drops the depth camera with
+# depth_camera:=false). expected_update_rate: a source silent for longer makes the costmap "not
+# current", and move_base_flex then commands zero velocity instead of the controller's output.
 global_costmap:
   global_frame: map
   robot_base_frame: base_footprint
@@ -18,9 +20,10 @@ global_costmap:
   obstacle_layer:
     observation_sources: scan depth
     scan: {topic: /scan, data_type: LaserScan, sensor_frame: base_footprint, marking: true, clearing: true,
-           inf_is_valid: true, obstacle_range: 6.0, raytrace_range: 8.0}
+           inf_is_valid: true, obstacle_range: 6.0, raytrace_range: 8.0, expected_update_rate: 0.5}
     depth: {topic: /camera/depth/points, data_type: PointCloud2, marking: true, clearing: true,
-            min_obstacle_height: 0.06, max_obstacle_height: 1.8, obstacle_range: 4.0, raytrace_range: 5.0}
+            min_obstacle_height: 0.06, max_obstacle_height: 1.8, obstacle_range: 4.0, raytrace_range: 5.0,
+            expected_update_rate: 0.5}
   inflation_layer:             # wide and slowly decaying, so detours keep their distance from obstacles
     inflation_radius: 1.0
     cost_scaling_factor: 3.0
@@ -35,15 +38,20 @@ local_costmap:
   width: 8.0
   height: 8.0
   resolution: 0.05
+  # Cells no sensor has seen stay NO_INFORMATION, which the controllers' footprint checks treat as
+  # blocked. It must be set on the costmap itself (the master grid's default value); the obstacle layer
+  # inherits it. Set on the layer alone, unseen cells still come out FREE in the combined costmap.
+  track_unknown_space: true
   plugins:
     - {name: obstacle_layer, type: "costmap_2d::ObstacleLayer"}
     - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
   obstacle_layer:
     observation_sources: scan depth
     scan: {topic: /scan, data_type: LaserScan, sensor_frame: base_footprint, marking: true, clearing: true,
-           inf_is_valid: true, obstacle_range: 6.0, raytrace_range: 8.0}
+           inf_is_valid: true, obstacle_range: 6.0, raytrace_range: 8.0, expected_update_rate: 0.5}
     depth: {topic: /camera/depth/points, data_type: PointCloud2, marking: true, clearing: true,
-            min_obstacle_height: 0.06, max_obstacle_height: 1.8, obstacle_range: 4.0, raytrace_range: 5.0}
+            min_obstacle_height: 0.06, max_obstacle_height: 1.8, obstacle_range: 4.0, raytrace_range: 5.0,
+            expected_update_rate: 0.5}
   inflation_layer:
     inflation_radius: 0.6
     cost_scaling_factor: 5.0

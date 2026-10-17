@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="wonik_navigation" type="cmd_vel_gate.py" name="cmd_vel_gate"/>
+  <test test-name="gate_timeouts" pkg="wonik_navigation" type="test_gate_timeouts.py" time-limit="60"/>
+</launch>

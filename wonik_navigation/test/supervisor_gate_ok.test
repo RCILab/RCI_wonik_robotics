@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<launch>
+  <include file="$(find wonik_navigation)/test/supervisor_gate.launch">
+    <arg name="get_path_mode" value="ok"/>
+    <arg name="reject" value="[]"/>
+    <arg name="expect" value="avoid"/>
+    <arg name="expect_route_resent" value="false"/>
+  </include>
+</launch>

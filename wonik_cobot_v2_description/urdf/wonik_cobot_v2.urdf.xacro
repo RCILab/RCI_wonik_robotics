@@ -151,9 +151,12 @@
   <xacro:qd_units/>
   <xacro:omni_wheels/>
 
-  <!-- 3D LiDAR (velodyne_simulator), stand-in for the Mid-360. Topic /points, frame velodyne. -->
+  <!-- 3D LiDAR (velodyne_simulator), stand-in for the Mid-360. Topic /points, frame velodyne.
+       min_range 0.3 m instead of the HDL-32E's 0.9 m, closer to the Mid-360 (0.1 m): obstacles right
+       beside the body must be visible (turn-in-place check); 0.3 m keeps most deck hits out. -->
   <xacro:property name="l" value="${g['lidar_xyz']}"/>
-  <xacro:HDL-32E parent="base_link" name="velodyne" topic="/points" hz="10" samples="625" gpu="$(arg lidar_gpu)">
+  <xacro:HDL-32E parent="base_link" name="velodyne" topic="/points" hz="10" samples="625" min_range="0.3"
+                 gpu="$(arg lidar_gpu)">
     <origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
   </xacro:HDL-32E>
 

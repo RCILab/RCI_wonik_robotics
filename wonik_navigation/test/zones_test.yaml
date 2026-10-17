@@ -1,0 +1,5 @@
+frame_id: map
+zones:
+  - name: avoid_start
+    type: avoid
+    polygon: [[-1.0, -1.0], [3.0, -1.0], [3.0, 1.0], [-1.0, 1.0]]

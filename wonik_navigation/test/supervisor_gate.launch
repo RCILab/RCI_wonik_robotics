@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- Included by the supervisor_gate_*.test files: route_supervisor + cmd_vel_gate + mock move_base_flex. -->
+<launch>
+  <arg name="get_path_mode"/>
+  <arg name="reject" default="[]"/>
+  <arg name="expect"/>
+  <arg name="expect_route_resent" default="false"/>
+
+  <node pkg="tf2_ros" type="static_transform_publisher" name="map_to_base" args="0 0 0 0 0 0 map base_footprint"/>
+  <node pkg="wonik_navigation" type="mock_mbf.py" name="move_base_flex">
+    <param name="get_path_mode" value="$(arg get_path_mode)"/>
+    <rosparam param="reject_controllers" subst_value="true">$(arg reject)</rosparam>
+  </node>
+  <node pkg="wonik_navigation" type="route_supervisor.py" name="route_supervisor">
+    <param name="route" value="$(find wonik_navigation)/test/route_test.yaml"/>
+    <param name="zones" value="$(find wonik_navigation)/test/zones_test.yaml"/>
+  </node>
+  <node pkg="wonik_navigation" type="cmd_vel_gate.py" name="cmd_vel_gate"/>
+  <test test-name="supervisor_gate" pkg="wonik_navigation" type="test_supervisor_gate.py" time-limit="60">
+    <param name="expect" value="$(arg expect)"/>
+    <param name="expect_route_resent" value="$(arg expect_route_resent)"/>
+  </test>
+</launch>
