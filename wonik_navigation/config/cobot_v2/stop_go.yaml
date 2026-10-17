@@ -1,5 +1,5 @@
 # stop_go_local_planner for cobot_v2 (parameter names follow neo_local_planner).
-# Keep acc/dec below the base's limits (wonik_cobot_v2_bringup/config/kinematics.yaml: linear_acc,
+# Keep acc/dec below the base's limits (wonik_cobot_bringup/config/cobot_v2/kinematics.yaml: linear_acc,
 # linear_dec) so the base can follow the braking profile and stops where it should.
 stop_go:
   max_vel_x: 1.0
@@ -25,8 +25,8 @@ stop_go:
   collision_latency: 0.3
   collision_margin: 0.1
   rotation_margin: 0.1
-  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out sideways at
-  # adjust_vel (holonomic base), farther approached again as a new segment
+  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out in any
+  # direction at adjust_vel (holonomic base), farther approached again as a new segment
   holonomic: true
   adjust_max_dist: 0.3
   adjust_vel: 0.1
@@ -56,8 +56,8 @@ stop_go_slow:
   collision_latency: 0.3
   collision_margin: 0.1
   rotation_margin: 0.1
-  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out sideways at
-  # adjust_vel (holonomic base), farther approached again as a new segment
+  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out in any
+  # direction at adjust_vel (holonomic base), farther approached again as a new segment
   holonomic: true
   adjust_max_dist: 0.3
   adjust_vel: 0.1

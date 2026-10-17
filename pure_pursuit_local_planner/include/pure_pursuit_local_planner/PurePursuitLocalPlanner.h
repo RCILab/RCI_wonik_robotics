@@ -65,8 +65,9 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     double m_start_yaw_error = 0;     // [rad] rotate in place first when the path starts off this much
     double m_max_curve_vel = 0;       // [rad/s] yaw rate limit in curves, caps the speed
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
-    double m_low_pass_gain = 0;       // yaw-rate low pass while translating (1 = off)
+    double m_low_pass_gain = 0;       // curvature low pass while translating (1 = off)
     double m_min_stop_dist = 0;       // [m] footprint check reaches this far beyond the braking distance
+    double m_path_heading_dist = 0;   // [m] path-ahead check: heading toward the path point this far on
     double m_goal_tune_time = 0;      // [s]
     double m_odom_timeout = 0;        // [s] older odometry is not used (the controller fails)
     double m_collision_latency = 0;   // [s] reaction time in the stopping distance
@@ -88,6 +89,8 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     bool m_is_goal_reached = false;
     bool m_blocked = false;
     geometry_msgs::Twist m_last_cmd_vel;
+    double m_curvature = 0;        // [1/m] filtered curvature of the last translating step
+    bool m_have_curvature = false; // m_curvature is the steering the base is driving with
 };
 
 } // namespace pure_pursuit_local_planner

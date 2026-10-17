@@ -14,6 +14,7 @@ avoid:
   start_yaw_error: 0.7       # rotate in place first if the path starts > 40 deg off (> 80 deg while moving)
   max_curve_vel: 0.3         # [rad/s] yaw rate in curves
   min_stop_dist: 0.3         # footprint checks reach this far past the stopping distance
+  path_heading_dist: 0.3     # path-ahead check: heading toward the path point this far on (not the next sample)
   collision_latency: 0.3     # [s] reaction time in the stopping distance
   rotation_margin: 0.1
   odom_timeout: 0.5

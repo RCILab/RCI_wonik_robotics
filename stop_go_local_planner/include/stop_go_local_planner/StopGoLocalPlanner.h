@@ -21,8 +21,10 @@ namespace stop_go_local_planner
 // corner_angle. Each segment starts with an in-place rotation to its heading (if the heading
 // error exceeds start_yaw_error), is followed with pure pursuit (yaw rate = v * curvature) and ends
 // in a stop. A segment end (and the goal) counts only when the robot is within xy_goal_tolerance of
-// it; a small miss (sideways, overshoot, or a localization correction) is driven out sideways
-// (ADJUSTING, holonomic bases), a larger one by approaching the point again as a new segment.
+// it; a small miss (sideways, overshoot, or a localization correction) is driven out without turning
+// (ADJUSTING: in any direction on a holonomic base; forward or backward along the heading on a
+// non-holonomic one, if what is left beside the heading is within tolerance), a larger one by
+// approaching the point again as a new segment.
 //
 // No obstacle avoidance: the robot keeps to the route. Every command is checked against the local
 // costmap with the swept footprint (local_planner_checks): driving over the stopping distance from the
@@ -68,9 +70,9 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
     double m_start_yaw_error = 0; // [rad] rotate in place first when the heading error exceeds this
     double m_corner_angle = 0;    // [rad] heading change that splits the plan into segments
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
-    double m_low_pass_gain = 0;   // yaw-rate low pass while translating (1 = off)
+    double m_low_pass_gain = 0;   // curvature low pass while translating (1 = off)
     double m_goal_tune_time = 0;  // [s] stay within tolerance this long before the goal counts
-    bool m_holonomic = true;      // the base can move sideways (ADJUSTING)
+    bool m_holonomic = true;      // the base can move sideways (ADJUSTING; false: along its heading only)
     double m_adjust_max_dist = 0; // [m] larger misses of a segment end are approached again as a segment
     double m_adjust_vel = 0;      // [m/s] speed limit while ADJUSTING
     double m_odom_timeout = 0;    // [s] older odometry is not used (the controller fails)
@@ -96,6 +98,8 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
     bool m_started = false; // the first control step of the current plan has run
     uint64_t m_update_counter = 0;
     geometry_msgs::Twist m_last_cmd_vel;
+    double m_curvature = 0;        // [1/m] filtered curvature of the last translating step
+    bool m_have_curvature = false; // m_curvature is the steering the base is driving with
 };
 
 } // namespace stop_go_local_planner
