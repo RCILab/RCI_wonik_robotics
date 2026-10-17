@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!-- Fault injection test bench (see scripts/fault_injection.py): cobot_v2 in the empty world with the
+     obstacle detector and the cmd_vel gate, the depth camera relayed through /camera_relay/points so the
+     test can cut the camera stream by killing the relay.
+       roslaunch wonik_gazebo fault_injection.launch
+       rosrun wonik_gazebo fault_injection.py <b1|b2|c|h|d|g>      (another terminal) -->
+<launch>
+  <arg name="gui" default="false"/>
+
+  <include file="$(find wonik_gazebo)/launch/cobot_v2.launch">
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="rviz" value="false"/>
+  </include>
+
+  <node pkg="topic_tools" type="relay" name="camera_relay" args="/camera/depth/points /camera_relay/points"/>
+
+  <node pkg="wonik_navigation" type="obstacle_detector.py" name="obstacle_detector" output="screen">
+    <rosparam file="$(find wonik_navigation)/config/cobot_v2/obstacle_detector.yaml" command="load"/>
+    <rosparam param="required_topics">[/points, /camera_relay/points]</rosparam>
+  </node>
+  <node pkg="wonik_navigation" type="cmd_vel_gate.py" name="cmd_vel_gate" output="screen"/>
+</launch>

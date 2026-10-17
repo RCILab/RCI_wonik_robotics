@@ -17,4 +17,9 @@
   <exec_depend>controller_manager</exec_depend>
   <exec_depend>wonik_cobot_v2_bringup</exec_depend>
   <exec_depend>wonik_cobot_v2_description</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>wonik_navigation</exec_depend>
+  <exec_depend>topic_tools</exec_depend>
 </package>

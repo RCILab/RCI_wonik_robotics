@@ -13,19 +13,20 @@ Clone this repository into the `src/` folder of a catkin workspace.
 
 | Package | Contents |
 |---|---|
-| `qd_kinematics` | Steer-drive kinematics node (N-module swerve, single-drive tricycle). `/cmd_vel` → steer angles and wheel speeds with a stop → steer-align → creep → drive state machine; joint states → wheel odometry on `/odom` and TF `odom → base_footprint`. ROS-independent core with unit tests. Ported from `qd_kinematics2`. |
-| `wonik_cobot_v2_description` | URDF/xacro of cobot_v2 (QD #2 type) without the arm. Meshes are converted from Wonik's STEP; geometry (drive unit and omni wheel positions, wheel size, LiDAR mount) is in `config/geometry.yaml`. Gazebo-only tags are in `urdf/wonik_cobot_v2.gazebo.xacro`. |
-| `wonik_cobot_v2_bringup` | `base.launch`: robot model, controller configuration and kinematics node, shared by the real robot and the simulation. |
+| `qd_kinematics` | Steer-drive kinematics node (N-module swerve, single-drive tricycle). `/cmd_vel` → steer angles and wheel speeds with a stop → steer-align → creep → drive state machine (creep checked with the measured wheel speeds, time limits, latched FAULT); joint states → wheel odometry. Command and feedback timeouts, input validation. ROS-independent core with unit tests. Ported from `qd_kinematics2`. |
+| `wonik_cobot_v2_description` | URDF/xacro of cobot_v2 (QD #2 type) without the arm. Meshes are converted from Wonik's STEP; geometry (drive unit and omni wheel positions, wheel size, LiDAR, depth camera and IMU mounts) is in `config/geometry.yaml`. Gazebo-only tags are in `urdf/wonik_cobot_v2.gazebo.xacro`. |
+| `wonik_cobot_v2_bringup` | `base.launch`: robot model, controller configuration, kinematics node (wheel odometry on `/wheel/odom`) and a robot_localization EKF fusing it with the IMU yaw rate into `/odom` and TF `odom → base_footprint` (`ekf:=false`: wheel odometry only). Shared by the real robot and the simulation. |
 | `wonik_gazebo` | Simulation only: `cobot_v2.launch` (world, robot, controllers, RViz), the `qd_kinematic_base` Gazebo plugin and worlds (`empty`, `wonik_hall`: a 16 m × 10 m test hall with a central island for a U-shaped route). |
 | `wonik_navigation` | 2D SLAM on the 3D LiDAR: `/points` → `pointcloud_to_laserscan` → `/scan` → `slam_toolbox` (`mapping.launch`), saved maps in `maps/`, AMCL localization on a saved map (`localization.launch`). Route following with move_base_flex (`navigation.launch`) and the route supervisor (`route.launch`, routes in `config/routes/`), with zones (`config/zones/`): obstacle detector (LiDAR + depth camera), zone manager and cmd_vel gate. |
-| `stop_go_local_planner` | Stop-and-go route follower (nav_core plugin, structured after `neo_local_planner`): straight segments, in-place rotation at corners, pure pursuit, 1.0 m/s, no obstacle avoidance. |
-| `pure_pursuit_local_planner` | Pure pursuit follower for curved paths (nav_core plugin, structured after `neo_local_planner`), used for detours planned around obstacles; slows in curves and stops for obstacles on the path ahead. |
+| `stop_go_local_planner` | Stop-and-go route follower (nav_core plugin, structured after `neo_local_planner`): straight segments, in-place rotation at corners, pure pursuit, 1.0 m/s, no obstacle avoidance (stops and waits when its motion is blocked). |
+| `pure_pursuit_local_planner` | Pure pursuit follower for curved paths (nav_core plugin, structured after `neo_local_planner`), used for detours planned around obstacles; slows in curves and stops when its motion or the path ahead is blocked. |
+| `local_planner_checks` | Checks shared by both planners: swept-footprint collision checks of translations and in-place turns on the costmap (unobserved and off-map cells count as blocked), stopping distance, goal reached by actual position. |
 
-The robot-side packages talk to the drive units through ros_control (steer joints: position, drive joints: velocity) and `joint_states`, so on the real robot only the Gazebo layer is replaced by the drive unit driver.
+The robot-side packages talk to the drive units through ros_control (steer joints: position, drive joints: velocity) and `joint_states`, so on the real robot only the Gazebo layer is replaced by the drive unit driver (and an IMU driver on `/imu/data`). Timeouts, faults, collision checks and what the driver has to provide (its own command watchdog, stamped `joint_states`) are described in [docs/safety.md](docs/safety.md).
 
 In Gazebo, `sim_drive` selects how the wheels move the base:
 - `kinematic` (default): wheel contacts are frictionless and the `qd_kinematic_base` plugin moves the base with the twist the measured steer angles and wheel speeds imply (no slip). For SLAM and navigation.
-- `physics`: the wheels drive the base through contact friction, including slip. For checking the kinematics and wheel odometry.
+- `physics`: the wheels drive the base through contact friction, including slip. For checking the kinematics and wheel odometry; the slip that wheel odometry cannot see in the heading is corrected by the EKF with the simulated IMU.
 
 ## Results
 cobot_v2 in Gazebo, driven with `teleop_twist_keyboard` (GIFs are sped up 2-3x).
@@ -64,10 +65,10 @@ source devel/setup.bash
 roslaunch wonik_gazebo cobot_v2.launch          # sim_drive:=physics, gui:=false rviz:=false (headless)
 
 # another terminal (source devel/setup.bash first)
-rosrun teleop_twist_keyboard teleop_twist_keyboard.py
+rosrun teleop_twist_keyboard teleop_twist_keyboard.py _repeat_rate:=10
 ```
 
-Keys: `i`/`,` forward/back, `Shift+J`/`Shift+L` sideways, `j`/`l` turn in place, `u`/`o` arcs, `k` stop, `z` slower (start at about 0.3 m/s). When the steering direction changes a lot, the robot stops, re-aligns the wheels and creeps before driving, so a short pause after a key change is expected.
+`_repeat_rate` keeps the command coming: the base stops when `/cmd_vel` is older than 0.5 s. Keys: `i`/`,` forward/back, `Shift+J`/`Shift+L` sideways, `j`/`l` turn in place, `u`/`o` arcs, `k` stop, `z` slower (start at about 0.3 m/s). When the steering direction changes a lot, the robot stops, re-aligns the wheels and creeps before driving, so a short pause after a key change is expected.
 
 Mapping and localization in the test hall:
 ```bash
@@ -87,9 +88,9 @@ rostopic pub -1 /route_supervisor/mode std_msgs/String avoid                # ov
 rostopic pub -1 /route_supervisor/controller std_msgs/String stop_go_slow   # another route controller mid-route
 ```
 
-Data flow: `move_base_flex` → `/cmd_vel_raw` → `cmd_vel_gate` → `/cmd_vel` → `qd_kinematics`. The gate stops the robot while `/obstacle_detected` is true, except in avoid zones; turning in place still passes. The detection box (`config/<robot>/obstacle_detector.yaml`) covers 1.5 m ahead of the bumper, from the LiDAR and the front depth camera (Gazebo needs a display to render the depth camera; without one, `depth_camera:=false`).
+Data flow: `move_base_flex` → `/cmd_vel_raw` → `cmd_vel_gate` → `/cmd_vel` → `qd_kinematics`. Outside a running detour the gate keeps a protective field in the direction of travel that grows with speed (obstacles from the LiDAR and the front depth camera, `config/<robot>/obstacle_detector.yaml`) and stops turns in place next to an obstacle; in every state it stops the robot when a required sensor is silent. Gazebo needs a display to render the depth camera; without one, pass `depth_camera:=false` to both `cobot_v2.launch` and `navigation.launch`.
 
-Unit tests: `catkin_make run_tests_qd_kinematics`.
+Tests: `catkin_make run_tests` (kinematics, collision checks, gate and detector policy, route supervisor and gate against a mock move_base_flex). Fault injection in Gazebo: `roslaunch wonik_gazebo fault_injection.launch`, then `rosrun wonik_gazebo fault_injection.py <case>` (cases in [docs/safety.md](docs/safety.md)).
 
 ## Docker
 For PCs without Ubuntu 20.04 (Ubuntu 22.04/24.04, Windows 11 with WSL2, ...). The image contains ROS Noetic, Gazebo 11 and the dependencies; `docker/run.sh` mounts this repository into a catkin workspace whose build is kept in the Docker volume `rci_wonik_ws`.
@@ -100,7 +101,7 @@ cd RCI_wonik_robotics
 docker build -t rci_wonik_noetic:latest docker        # once, takes a few minutes
 docker/run.sh catkin_make                             # build; repeat after changing C++ code
 docker/run.sh roslaunch wonik_gazebo cobot_v2.launch                    # terminal 1
-docker/run.sh rosrun teleop_twist_keyboard teleop_twist_keyboard.py     # terminal 2
+docker/run.sh rosrun teleop_twist_keyboard teleop_twist_keyboard.py _repeat_rate:=10     # terminal 2
 ```
 
 - `docker/run.sh` without arguments opens a shell in the container.

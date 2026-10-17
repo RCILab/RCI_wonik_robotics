@@ -20,6 +20,9 @@ add_dependencies(qd_kinematic_base ${catkin_EXPORTED_TARGETS})
 install(TARGETS qd_kinematic_base
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
+catkin_install_python(PROGRAMS scripts/fault_injection.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 install(DIRECTORY launch worlds
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
