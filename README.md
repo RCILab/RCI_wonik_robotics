@@ -1,4 +1,4 @@
-# RCI_wonik_robotics2 ? ROS 2 Humble
+# RCI_wonik_robotics2 - ROS 2 Humble
 
 ROS 2 Humble / Ubuntu 22.04 port of the reviewed Wonik QD AGV simulation.
 Branch: **humble-devel**. The original ROS 1 working tree is separate and unchanged.
@@ -12,8 +12,10 @@ ROS package names are retained; only the project directory has the suffix **2**.
 - Stop -> align -> creep -> drive control, feedback/command timeouts, latched fault and explicit reset.
 - Wheel odometry + IMU EKF; AMCL localization and slam_toolbox mapping.
 - StopGo route following and PurePursuit detours, stop/avoid zones, route rejoining.
-- Full-footprint collision checks, stopping-distance checks, sensor freshness and NaN checks,
-  and the final command gate.
+- Full-footprint collision checks, predicted PurePursuit yaw-rate transitions, 8-direction protective
+  fields with stopping distances, sensor freshness and NaN checks, and the final command gate.
+- Controller handover at corners skips the completed segment stub.
+- Six Gazebo fault-injection scenarios, including feedback loss and depth-camera loss.
 - Kinematic and contact-physics simulation modes, the hall/map/U route, LiDAR and depth camera.
 
 ROS interfaces use rclcpp/rclpy, ament/colcon, ros2_control, and Nav2 Controller plugins.
@@ -81,6 +83,30 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=cmd_
 
 RViz shows the map, route, plans, zones and detection box. Use 2D Pose Estimate for localization.
 Missions are started by route.launch.py; a free-space RViz goal is not a route command.
+
+## Fault injection
+
+Stop the mission and simulator first, then run the dedicated empty-world bench in two terminals:
+
+~~~bash
+ros2 launch wonik_gazebo fault_injection.launch.py
+ros2 run wonik_gazebo fault_injection.py all
+~~~
+
+Individual cases: b1 feedback loss, b2 command loss, c unresponsive drive controller,
+h invalid/stale joint states, d side obstacle during rotation, g low obstacle followed by camera loss.
+The runner prints measurements and PASS/FAIL and returns a nonzero exit code on failure.
+It restores controllers and the camera relay and removes its obstacles on exit.
+The default is headless; rendering still needs a display (Docker supplies Xvfb).
+Use gui:=true for the Gazebo window.
+
+The detector publishes /obstacle_distances (Float32MultiArray): front, front-left, left, rear-left,
+rear, rear-right, right, front-right. The gate selects the directions of translation and computes
+a protective distance using the faster of the current and last output command speeds, with
+dec=0.5 m/s^2, latency=0.3 s and margin=0.3 m. These are cmd_vel_gate ROS parameters.
+The legacy /obstacle_detected Boolean remains available for display.
+
+See [safety behaviour](docs/safety.md) for timeout, collision-check and fault-reset details.
 
 ## Mapping
 
@@ -173,7 +199,8 @@ Fault reset requires fresh feedback and returns through the stop/align sequence.
 
 ## Validation
 
-See docs/humble-validation.md for the checks performed on this port.
+See [Humble validation](docs/humble-validation.md) for builds, tests, mission and fault-injection results.
+The later ROS 1 directional safety, controller and fault-injection changes are included.
 The existing GIFs under docs/gifs are inherited ROS 1 demonstrations.
 
 ## Contact

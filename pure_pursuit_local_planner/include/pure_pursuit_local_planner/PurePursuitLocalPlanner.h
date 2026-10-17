@@ -49,7 +49,7 @@ class PurePursuitLocalPlanner : public nav2_core::Controller
   private:
     void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg);
     bool odometryFresh(const rclcpp::Time &now) const;
-    bool commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed, double rotation_left,
+    bool commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed, double target_yawrate, double rotation_left,
                        const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot, double yaw);
 
   private:

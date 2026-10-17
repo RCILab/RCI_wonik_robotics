@@ -112,6 +112,7 @@ class StopGoLocalPlanner : public nav2_core::Controller
     rclcpp::Time m_first_goal_reached_time{0, 0, RCL_ROS_TIME};
     bool m_is_goal_reached = false;
     bool m_blocked = false;
+    bool m_started = false;
     uint64_t m_update_counter = 0;
     geometry_msgs::msg::Twist m_last_cmd_vel;
 };

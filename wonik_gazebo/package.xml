@@ -11,5 +11,15 @@
   <exec_depend>gazebo_ros2_control</exec_depend>
   <exec_depend>wonik_cobot_v2_bringup</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>tf_transformations</exec_depend>
+  <exec_depend>wonik_navigation</exec_depend>
   <export><build_type>ament_cmake</build_type></export>
 </package>

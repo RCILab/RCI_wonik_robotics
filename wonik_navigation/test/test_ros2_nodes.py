@@ -6,7 +6,7 @@ import pytest
 import rclpy
 from geometry_msgs.msg import Twist, TransformStamped
 from sensor_msgs.msg import PointCloud2, PointField
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float32MultiArray, String
 
 def script(name):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).parents[1] / "scripts" / (name + ".py"))
@@ -29,8 +29,9 @@ def ros():
 def gate():
     node = script("cmd_vel_gate").CmdVelGate()
     node.pub = Capture()
-    for key, value in dict(detected=False, near=False, sensors_ok=True, state="FOLLOW").items():
+    for key, value in dict(near=False, sensors_ok=True, state="FOLLOW").items():
         node.on_input(String(data=value) if isinstance(value, str) else Bool(data=value), key)
+    node.on_input(Float32MultiArray(data=[float("inf")]*8), "dist")
     return node
 
 def test_gate_stops_existing_turn_on_near_obstacle(ros):
@@ -49,7 +50,7 @@ def test_gate_stops_existing_turn_on_near_obstacle(ros):
 def test_gate_stops_on_sensor_failure_even_if_translation_already_blocked(ros):
     node = gate()
     try:
-        node.on_input(Bool(data=True), "detected")
+        node.on_input(Float32MultiArray(data=[0.1] + [float("inf")]*7), "dist")
         node.check()
         cmd = Twist()
         cmd.angular.z = 0.5
@@ -94,8 +95,9 @@ def test_all_nan_cloud_is_invalid_and_does_not_clear_obstacle(ros):
             msg.data = np.asarray(points, dtype="<f4").tobytes()
             return msg
         node.on_cloud(cloud([[1.0,0.0,0.3]]*200), "/points")
-        assert node.evaluate()[:3] == (True, False, True)
+        dist, near, ok, _ = node.evaluate()
+        assert dist[0] < 0.5 and not near and ok
         node.on_cloud(cloud([[float("nan")]*3]*200), "/points")
-        assert node.evaluate()[:3] == (True, True, False)
+        assert node.evaluate()[:3] == ([0.0]*8, True, False)
     finally:
         node.destroy_node()

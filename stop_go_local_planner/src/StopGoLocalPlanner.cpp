@@ -213,7 +213,6 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
     // current segment in the local frame (recomputed after approach_again() changed its start)
     tf2::Vector3 seg_start, seg_end, seg_dir;
     double seg_len = 0, along = 0, remaining = 0, dist_end = 0, target_yaw = yaw;
-    const bool is_last_segment = m_segment + 2 >= m_vertices.size();
     auto update_segment = [&]() {
         seg_start = global_to_local * m_vertices[m_segment];
         seg_end = global_to_local * m_vertices[m_segment + 1];
@@ -233,6 +232,20 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
         dist_end = (seg_end - pos).length();
     };
     update_segment();
+
+    // A plan handed over at a corner (e.g. a controller switch while turning there) starts with the stub
+    // of the leg the robot has just finished: skip it instead of turning back to it. (A short first
+    // segment the robot stands at the start of is driven as usual.)
+    if (m_segment == 0 && m_state == STATE_IDLE && m_vertices.size() > 2 && !m_started &&
+        dist_end <= m_adjust_max_dist && dist_end < (seg_start - pos).length())
+    {
+        RCLCPP_INFO(m_node->get_logger(), "already at the end of segment 1 (%.3f m off): starting with segment 2",
+                       dist_end);
+        m_segment = 1;
+        update_segment();
+    }
+    m_started = true;
+    const bool is_last_segment = m_segment + 2 >= m_vertices.size();
 
     // moved off the goal after reaching it (e.g. a localization correction)
     if (m_state == STATE_GOAL && dist_end > xy_tol)
@@ -475,6 +488,7 @@ bool StopGoLocalPlanner::setPlan(const std::vector<geometry_msgs::msg::PoseStamp
     m_first_goal_reached_time = rclcpp::Time(0, 0, RCL_ROS_TIME);
     m_is_goal_reached = false;
     m_blocked = false;
+    m_started = false;
     // Start the slew limits from the current motion, so a plan handed over while driving (e.g. from
     // another controller) continues without a dip in speed.
     m_last_cmd_vel = geometry_msgs::msg::Twist();

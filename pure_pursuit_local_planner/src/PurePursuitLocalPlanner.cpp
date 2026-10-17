@@ -168,6 +168,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
     double control_vel_x = 0;
     double control_yawrate = 0;
     double planned_speed = 0;
+    double target_yawrate = 0; // yaw rate of the pursuit arc, before the low pass and slew limit
     double rotation_left = 0;
 
     if (remaining <= m_limits.xy_goal_tolerance && m_state != STATE_ROTATING)
@@ -216,6 +217,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
 
         // yaw rate = v * curvature, low passed and slew limited (smooth re-steering of the drive units)
         control_yawrate = control_vel_x * curvature;
+        target_yawrate = control_yawrate;
         control_yawrate = control_yawrate * m_low_pass_gain + m_last_cmd_vel.angular.z * (1 - m_low_pass_gain);
         control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_trans_acc_lim_theta * dt);
         m_state = STATE_TRANSLATING;
@@ -224,7 +226,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = std::min(std::max(control_vel_x, 0.0), m_limits.max_vel_x);
     cmd.angular.z = std::min(std::max(control_yawrate, -m_limits.max_vel_theta), m_limits.max_vel_theta);
-    if (!commandIsFree(cmd, planned_speed, rotation_left, local_plan, robot, yaw))
+    if (!commandIsFree(cmd, planned_speed, target_yawrate, rotation_left, local_plan, robot, yaw))
     {
         if (m_state == STATE_TRANSLATING)
         {
@@ -253,8 +255,9 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
 }
 
 bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed,
-                                            double rotation_left, const std::vector<tf2::Vector3> &local_plan,
-                                            const tf2::Transform &robot, double yaw)
+                                            double target_yawrate, double rotation_left,
+                                            const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot,
+                                            double yaw)
 {
     const double v_cmd = std::fabs(cmd.linear.x);
     if (v_cmd < 1e-3 && std::fabs(cmd.angular.z) < 1e-3)
@@ -271,10 +274,20 @@ bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::msg::Twist &cmd
     if (v_cmd >= 1e-3)
     {
         // over the distance the base needs to stop (measured, commanded or planned speed) plus min_stop_dist:
-        // 1. the motion this command starts, from where the robot is (it may be off the path, or cut a corner)
+        // 1. the motion this controller drives from where the robot is (it may be off the path, or cut a
+        //    corner): the commanded speed, the yaw rate ramping from the command toward the pursuit arc at
+        //    trans_acc_lim_theta, as the next control steps will command it
         const double dist = checks::stoppingDistance(m_odometry->twist.twist.linear.x, std::max(v_cmd, planned_speed),
                                                      m_dec_lim_x, m_collision_latency, m_min_stop_dist);
-        result = checker.checkTwist(start, cmd.linear.x, 0, cmd.angular.z, dist / v_cmd);
+        std::vector<checks::Pose2D> motion{start};
+        double wz = cmd.angular.z;
+        const double dt = 0.05;
+        for (double s = 0; s < dist && motion.size() < 2000; s += v_cmd * dt)
+        {
+            wz = slew(wz, target_yawrate, m_trans_acc_lim_theta * dt);
+            motion.push_back(checks::integrateTwist(motion.back(), cmd.linear.x, 0, wz, dt));
+        }
+        result = checker.checkPath(motion, dist);
         what = "driving";
         // 2. the path ahead from its closest point
         if (result.free())

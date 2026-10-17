@@ -12,7 +12,7 @@ from rclpy.node import Node
 from tf2_ros import StaticTransformBroadcaster
 from geometry_msgs.msg import Twist, TransformStamped, PoseStamped
 from nav2_msgs.action import FollowPath, ComputePathToPose
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float32MultiArray, String
 
 ROOT = Path(__file__).parents[1]
 def script(name):
@@ -28,7 +28,7 @@ class MockNav2(Node):
         self.current = None
         self.controllers, self.states, self.output = [], [], []
         self.raw = self.create_publisher(Twist, "cmd_vel_raw", 1)
-        self.detected = self.create_publisher(Bool, "obstacle_detected", 1)
+        self.dist = self.create_publisher(Float32MultiArray, "obstacle_distances", 1)
         self.near = self.create_publisher(Bool, "obstacle_near", 1)
         self.ok = self.create_publisher(Bool, "obstacle_detector/sensors_ok", 1)
         self.zone = self.create_publisher(String, "current_zone", 1)
@@ -48,7 +48,7 @@ class MockNav2(Node):
         self.tf.sendTransform(tf)
 
     def sensors(self):
-        self.detected.publish(Bool(data=True))
+        self.dist.publish(Float32MultiArray(data=[0.1] + [float("inf")] * 7))
         self.near.publish(Bool(data=False))
         self.ok.publish(Bool(data=True))
         self.zone.publish(String(data="avoid"))
