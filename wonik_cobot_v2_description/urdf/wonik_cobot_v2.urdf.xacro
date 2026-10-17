@@ -1,0 +1,160 @@
+<?xml version="1.0"?>
+<!-- Wonik cobot_v2 (QD #2 type). Geometry comes from config/geometry.yaml; the cobot arm is not modelled.
+     Meshes are visual only (converted from cobot_v2_asm.stp); collisions are primitives.
+     Everything Gazebo-specific is in wonik_cobot_v2.gazebo.xacro (ignored outside Gazebo).
+       xacro wonik_cobot_v2.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] -->
+<robot name="wonik_cobot_v2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="geometry" default="$(find wonik_cobot_v2_description)/config/geometry.yaml"/>
+  <xacro:arg name="sim_drive" default="kinematic"/>
+  <xacro:arg name="lidar_gpu" default="false"/>
+
+  <xacro:include filename="$(find velodyne_description)/urdf/HDL-32E.urdf.xacro"/>
+  <xacro:include filename="$(find wonik_cobot_v2_description)/urdf/wonik_cobot_v2.gazebo.xacro"/>
+
+  <xacro:property name="g" value="${xacro.load_yaml('$(arg geometry)')}"/>
+  <xacro:property name="wheel_r" value="${g['wheel_diameter'] / 2.0}"/>
+  <xacro:property name="omni_r" value="${g['omni_diameter'] / 2.0}"/>
+  <xacro:property name="mesh_dir" value="package://wonik_cobot_v2_description/meshes"/>
+
+  <material name="body_grey"><color rgba="0.70 0.71 0.74 1.0"/></material>
+  <material name="qd_red"><color rgba="0.75 0.22 0.18 1.0"/></material>
+
+  <!-- base: base_link coincides with base_footprint (floor, body centre); mesh is in this frame -->
+  <link name="base_footprint"/>
+  <joint name="base_link_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <xacro:property name="b" value="${g['body_box']}"/>
+  <xacro:property name="body_h" value="${b[3] - b[2]}"/>
+  <link name="base_link">
+    <inertial>
+      <mass value="${g['body_mass']}"/>
+      <origin xyz="0 0 ${b[2] + body_h / 2}"/>
+      <inertia ixx="${g['body_mass'] * (b[1] ** 2 + body_h ** 2) / 12}" ixy="0" ixz="0"
+               iyy="${g['body_mass'] * (b[0] ** 2 + body_h ** 2) / 12}" iyz="0"
+               izz="${g['body_mass'] * (b[0] ** 2 + b[1] ** 2) / 12}"/>
+    </inertial>
+    <visual>
+      <geometry><mesh filename="${mesh_dir}/base.stl"/></geometry>
+      <material name="body_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${b[2] + body_h / 2}"/>
+      <geometry><box size="${b[0]} ${b[1]} ${body_h}"/></geometry>
+    </collision>
+  </link>
+
+  <!-- QD unit: steer (continuous, position interface) + drive (continuous, velocity interface).
+       Steer frame sits on the steer axis at wheel-centre height; x = rolling direction at angle 0. -->
+  <xacro:macro name="qd_unit" params="name x y">
+    <joint name="${name}_steer_joint" type="continuous">
+      <origin xyz="${x} ${y} ${wheel_r}" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="1.0"/>
+      <parent link="base_link"/>
+      <child link="${name}_steer_link"/>
+    </joint>
+    <link name="${name}_steer_link">
+      <inertial>
+        <mass value="2.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+      </inertial>
+      <visual>
+        <geometry><mesh filename="${mesh_dir}/qd_unit.stl"/></geometry>
+        <material name="qd_red"/>
+      </visual>
+    </link>
+
+    <joint name="${name}_drive_joint" type="continuous">
+      <origin xyz="0 0 0" rpy="${-pi / 2} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="0.015"/>
+      <limit effort="1000.0" velocity="20.0"/>
+      <parent link="${name}_steer_link"/>
+      <child link="${name}_drive_link"/>
+    </joint>
+    <xacro:property name="w" value="${g['wheel_width']}"/>
+    <link name="${name}_drive_link">
+      <inertial>
+        <mass value="5.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="${5.0 * (3 * wheel_r ** 2 + w ** 2) / 12}" ixy="0" ixz="0"
+                 iyy="${5.0 * (3 * wheel_r ** 2 + w ** 2) / 12}" iyz="0" izz="${5.0 * wheel_r ** 2 / 2}"/>
+      </inertial>
+      <!-- Sphere, not a cylinder: ODE puts a rigid cylinder's contact on its rim edge, so the wheel
+           rolls on the outer edge while the body turns and wheel odometry over-reads yaw (+44 deg per
+           in-place turn with a 6 cm cylinder, +1.7 deg with the sphere). -->
+      <collision>
+        <geometry><sphere radius="${wheel_r}"/></geometry>
+      </collision>
+    </link>
+
+    <transmission name="${name}_steer_trans">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${name}_steer_joint">
+        <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${name}_steer_motor">
+        <mechanicalReduction>1</mechanicalReduction>
+      </actuator>
+    </transmission>
+    <transmission name="${name}_drive_trans">
+      <type>transmission_interface/SimpleTransmission</type>
+      <joint name="${name}_drive_joint">
+        <hardwareInterface>hardware_interface/VelocityJointInterface</hardwareInterface>
+      </joint>
+      <actuator name="${name}_drive_motor">
+        <mechanicalReduction>1</mechanicalReduction>
+      </actuator>
+    </transmission>
+  </xacro:macro>
+
+  <!-- Passive omni wheel: sphere contact (its visual is part of base.stl). -->
+  <xacro:macro name="omni_wheel" params="name x y">
+    <joint name="${name}_omni_joint" type="fixed">
+      <origin xyz="${x} ${y} ${omni_r}" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="${name}_omni_link"/>
+    </joint>
+    <link name="${name}_omni_link">
+      <inertial>
+        <mass value="2.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="0.003" ixy="0" ixz="0" iyy="0.003" iyz="0" izz="0.003"/>
+      </inertial>
+      <collision>
+        <geometry><sphere radius="${omni_r}"/></geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- xacro has no loops -->
+  <xacro:macro name="qd_units" params="i:=0">
+    <xacro:if value="${i &lt; len(g['module_names'])}">
+      <xacro:qd_unit name="${g['module_names'][i]}" x="${g['module_x'][i]}" y="${g['module_y'][i]}"/>
+      <xacro:qd_units i="${i + 1}"/>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:macro name="omni_wheels" params="i:=0">
+    <xacro:if value="${i &lt; len(g['omni_names'])}">
+      <xacro:omni_wheel name="${g['omni_names'][i]}" x="${g['omni_x'][i]}" y="${g['omni_y'][i]}"/>
+      <xacro:omni_wheels i="${i + 1}"/>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:qd_units/>
+  <xacro:omni_wheels/>
+
+  <!-- 3D LiDAR (velodyne_simulator), stand-in for the Mid-360. Topic /points, frame velodyne. -->
+  <xacro:property name="l" value="${g['lidar_xyz']}"/>
+  <xacro:HDL-32E parent="base_link" name="velodyne" topic="/points" hz="10" samples="625" gpu="$(arg lidar_gpu)">
+    <origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
+  </xacro:HDL-32E>
+
+  <xacro:cobot_v2_gazebo sim_drive="$(arg sim_drive)"/>
+
+</robot>

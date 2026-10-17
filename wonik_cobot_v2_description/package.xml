@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>wonik_cobot_v2_description</name>
+  <version>0.1.0</version>
+  <description>URDF/xacro, meshes and geometry of the Wonik cobot_v2 AGV (QD #2 type)</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>velodyne_description</exec_depend>
+</package>

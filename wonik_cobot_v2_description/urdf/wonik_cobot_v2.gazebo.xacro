@@ -1,0 +1,91 @@
+<?xml version="1.0"?>
+<!-- Gazebo-only part of the cobot_v2 model; included by wonik_cobot_v2.urdf.xacro and ignored outside
+     Gazebo. Uses the properties g (geometry.yaml) and wheel_r of the including file.
+       sim_drive:=kinematic  wheel and caster contacts are frictionless and the qd_kinematic_base plugin
+                             (wonik_gazebo) moves the base with the twist that the measured steer angles
+                             and wheel speeds imply. No slip; for SLAM and navigation work.
+       sim_drive:=physics    the wheels drive the base through contact friction, with the slip that
+                             brings. For checking the kinematics and wheel odometry. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="cobot_v2_gazebo" params="sim_drive">
+    <xacro:property name="kinematic" value="${sim_drive == 'kinematic'}"/>
+    <xacro:if value="${sim_drive not in ['kinematic', 'physics']}">
+      <xacro:unknown_sim_drive_use_kinematic_or_physics/>
+    </xacro:if>
+
+    <gazebo reference="base_link">
+      <material>Gazebo/Grey</material>
+    </gazebo>
+
+    <xacro:macro name="qd_unit_gazebo" params="name">
+      <gazebo reference="${name}_steer_link">
+        <material>Gazebo/Red</material>
+      </gazebo>
+      <gazebo reference="${name}_drive_link">
+        <xacro:if value="${kinematic}">
+          <mu1>0.0</mu1>
+          <mu2>0.0</mu2>
+        </xacro:if>
+        <xacro:unless value="${kinematic}">
+          <mu1>2.0</mu1>
+          <mu2>2.0</mu2>
+          <slip1>0.001</slip1>
+          <slip2>0.001</slip2>
+        </xacro:unless>
+      </gazebo>
+    </xacro:macro>
+    <xacro:macro name="qd_units_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['module_names'])}">
+        <xacro:qd_unit_gazebo name="${g['module_names'][i]}"/>
+        <xacro:qd_units_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:qd_units_gazebo/>
+
+    <xacro:macro name="omni_wheels_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['omni_names'])}">
+        <gazebo reference="${g['omni_names'][i]}_omni_link">
+          <mu1>${0.0 if kinematic else 0.01}</mu1>
+          <mu2>${0.0 if kinematic else 0.01}</mu2>
+        </gazebo>
+        <xacro:omni_wheels_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:omni_wheels_gazebo/>
+
+    <gazebo>
+      <!-- Steer joints: position, drive joints: velocity (as on the real drive units). -->
+      <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
+        <robotNamespace>/</robotNamespace>
+        <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
+        <legacyModeNS>true</legacyModeNS>
+      </plugin>
+
+      <!-- Ground truth of base_footprint for evaluation: /ground_truth/odom in frame world, no TF. -->
+      <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
+        <alwaysOn>true</alwaysOn>
+        <updateRate>50.0</updateRate>
+        <bodyName>base_footprint</bodyName>
+        <topicName>ground_truth/odom</topicName>
+        <frameName>world</frameName>
+        <gaussianNoise>0.0</gaussianNoise>
+        <xyzOffsets>0 0 0</xyzOffsets>
+        <rpyOffsets>0 0 0</rpyOffsets>
+      </plugin>
+
+      <xacro:if value="${kinematic}">
+        <plugin name="qd_kinematic_base" filename="libqd_kinematic_base.so">
+          <driveType>${g['drive_type']}</driveType>
+          <moduleX>${' '.join([str(v) for v in g['module_x']])}</moduleX>
+          <moduleY>${' '.join([str(v) for v in g['module_y']])}</moduleY>
+          <fixedAxleX>${g['fixed_axle_x'] if 'fixed_axle_x' in g else 0.0}</fixedAxleX>
+          <wheelRadius>${wheel_r}</wheelRadius>
+          <steerJoints>${' '.join(g['steer_joints'])}</steerJoints>
+          <driveJoints>${' '.join(g['drive_joints'])}</driveJoints>
+        </plugin>
+      </xacro:if>
+    </gazebo>
+  </xacro:macro>
+
+</robot>

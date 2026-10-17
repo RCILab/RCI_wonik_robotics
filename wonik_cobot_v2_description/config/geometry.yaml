@@ -1,0 +1,31 @@
+# Wonik cobot_v2 (QD #2 type): two steer+drive (QD) units on one diagonal, two passive omni wheels
+# on the other. Measured from cobot_v2_asm.stp / cobot_v2-모형.pdf (received 2026-10-17).
+# Single source of truth: read by urdf/wonik_cobot_v2.urdf.xacro and, via the bringup launch,
+# by qd_kinematics' kinematics_node.
+#
+# Frame: base_footprint on the floor under the body centre, z up, x = front. "Front" is the end
+# with the e-stop panel and charging contacts (CAD +Z); Wonik has not confirmed this yet.
+
+drive_type: swerve
+module_names: [front_right, rear_left]
+module_x: [0.1975, -0.1975]   # steer axes = wheel contact points in the CAD [m]
+module_y: [-0.130, 0.130]
+wheel_diameter: 0.152         # tyre diameter measured in the CAD; drive unit spec pending
+wheel_width: 0.06
+steer_joints: [front_right_steer_joint, rear_left_steer_joint]
+drive_joints: [front_right_drive_joint, rear_left_drive_joint]
+
+# Passive omni wheels (diameter 127 mm), simulated as low-friction spheres.
+omni_names: [front_left, rear_right]
+omni_x: [0.200, -0.200]
+omni_y: [0.230, -0.230]
+omni_diameter: 0.127
+
+# Lower body collision box [length, width, bottom_z, top_z]; the CAD lower body is 864 x 664 mm,
+# deck at 0.843 m. Upper parts (lift column, leak detector) are visual only. Mass is a guess.
+body_box: [0.864, 0.664, 0.05, 0.843]
+body_mass: 100.0
+
+# 3D LiDAR mount (base_footprint frame, sensor base). Velodyne HDL-32E stands in for the
+# Livox Mid-360 until its mount position is decided; this spot is free deck space front-left.
+lidar_xyz: [0.30, 0.15, 0.851]
