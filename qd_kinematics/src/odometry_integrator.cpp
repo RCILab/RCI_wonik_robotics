@@ -15,6 +15,10 @@ void OdometryIntegrator::reset(const Pose2D &pose)
 
 bool OdometryIntegrator::update(const Twist2D &twist, double stamp_sec)
 {
+    if (!std::isfinite(twist.vx) || !std::isfinite(twist.vy) || !std::isfinite(twist.wz) || !std::isfinite(stamp_sec))
+    {
+        return false; // dropped; the next valid sample continues from the last valid one
+    }
     if (!has_prev_)
     {
         prev_twist_ = twist;

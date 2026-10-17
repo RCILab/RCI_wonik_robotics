@@ -1,20 +1,45 @@
 # qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, joint names)
 # is loaded separately from wonik_cobot_v2_description/config/geometry.yaml.
+# PLACEHOLDER marks values that wait for the drive unit spec from Wonik; nothing here is a confirmed
+# hardware limit.
 control_rate_hz: 100.0
-# teleop_twist_keyboard publishes once per key press, so the command is held this long.
-cmd_timeout_sec: 10.0
 odom_frame: odom
 base_frame: base_footprint
 publish_tf: true
 
-# Placeholder limits until the drive unit spec arrives (the route controllers stay below these).
+# Input timeouts (see docs/safety.md). Without a cmd_vel for cmd_timeout_sec the base decelerates to a
+# stop; teleop must therefore repeat its command (teleop_twist_keyboard _repeat_rate:=10).
+cmd_timeout_sec: 0.5
+# Without an accepted, recent joint_states sample for this long: zero wheel speed, steering held.
+joint_state_timeout_sec: 0.2
+# joint_states stamps may lead this node's clock by this much (clock offset between PCs).
+# Older-than-last stamps are dropped however old; only this node's ROS clock going back (simulation
+# reset) resets odometry.
+stamp_future_tolerance_sec: 0.05
+
+# Limits. PLACEHOLDER until the drive unit spec arrives (the route controllers stay below these).
 linear_acc: 0.4
 linear_dec: 0.6
 max_steer_vel: 1.5
 # Steer joints are continuous in simulation, so the +-(90 + 10) deg band is reachable.
+# PLACEHOLDER: the real steering range is not confirmed; set 0 if it ends at +-90 deg.
 steer_hysteresis_deg: 10.0
 steer_track_limit: 0.3
 creep_speed_max: 0.08
+
+# Start-up and drive supervision (stop -> steer-align -> creep -> drive). PLACEHOLDER timings.
+# WAIT_STOP: wheels stopped within (speed / linear_dec + wait_stop_timeout) s, else FAULT.
+wait_stop_timeout: 1.0
+# STEER_ALIGN / CREEP (measured wheel speeds must follow the creep command): a miss restarts the
+# sequence; after max_start_attempts misses without reaching DRIVE -> FAULT.
+align_timeout: 5.0
+creep_timeout: 3.0
+max_start_attempts: 2
+# DRIVE: a wheel off its command by more than max(abs_tol, rel_tol * |command|) for this long -> FAULT.
+drive_track_abs_tol: 0.15
+drive_track_rel_tol: 0.5
+drive_fault_time: 1.0
+# FAULT is latched (new cmd_vel does not clear it): rosservice call /kinematics_node/clear_fault
 
 odom_max_dt: 0.1
 # [x, y, z, roll, pitch, yaw]

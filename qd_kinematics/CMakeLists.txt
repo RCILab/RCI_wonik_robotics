@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   nav_msgs
   sensor_msgs
   std_msgs
+  std_srvs
   tf2
   tf2_ros
   tf2_geometry_msgs
@@ -19,7 +20,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}_core
-  CATKIN_DEPENDS roscpp geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs
+  CATKIN_DEPENDS roscpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros tf2_geometry_msgs
 )
 
 include_directories(include ${catkin_INCLUDE_DIRS})
@@ -29,6 +30,7 @@ add_library(${PROJECT_NAME}_core
   src/kinematics_model.cpp
   src/steer_drive_controller.cpp
   src/odometry_integrator.cpp
+  src/stamp_monitor.cpp
 )
 
 add_executable(kinematics_node src/kinematics_node.cpp)

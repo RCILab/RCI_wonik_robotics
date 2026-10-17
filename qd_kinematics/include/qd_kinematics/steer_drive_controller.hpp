@@ -57,10 +57,31 @@ struct ControllerParams
     double sync_hold_sec{1.00};
     // CREEP speed cap [m/s] before full DRIVE release.
     double creep_speed_max{0.08};
+
+    // Start-up supervision. CREEP is left for DRIVE only when the MEASURED wheel speeds follow the
+    // creep reference; the commanded speeds converging proves nothing about the drive units.
+    // WAIT_STOP: the wheels must stop within (fastest commanded wheel speed / linear_dec +
+    // wait_stop_timeout) seconds, otherwise FAULT (a drive that does not stop is not retried).
+    double wait_stop_timeout{1.0}; // [s]
+    // STEER_ALIGN must hold alignment within align_timeout and CREEP must sync within creep_timeout.
+    // A miss goes back to WAIT_STOP for another start attempt; after max_start_attempts misses
+    // without reaching DRIVE the controller enters FAULT.
+    double align_timeout{5.0}; // [s]
+    double creep_timeout{3.0}; // [s]
+    int max_start_attempts{2};
+    // DRIVE: a wheel whose measured speed stays further than max(drive_track_abs_tol,
+    // drive_track_rel_tol * |command|) from its command for drive_fault_time -> FAULT
+    // (drive unit not responding, or only some modules responding).
+    double drive_track_abs_tol{0.15}; // [m/s]
+    double drive_track_rel_tol{0.5};
+    double drive_fault_time{1.0}; // [s]
 };
 
 // Stop-steer-go controller shared by every KinematicsModel.
 // DRIVE -> (misaligned) WAIT_STOP -> (stopped) STEER_ALIGN -> (aligned) CREEP -> (synced) DRIVE
+// FAULT (from the start-up supervision or the DRIVE tracking check above) commands zero wheel speed
+// and holds the measured steer angles. It is latched: neither new commands nor reset() clear it,
+// only clearFault().
 class SteerDriveController
 {
   public:
@@ -69,7 +90,8 @@ class SteerDriveController
         DRIVE,
         WAIT_STOP,
         STEER_ALIGN,
-        CREEP
+        CREEP,
+        FAULT
     };
 
     struct DebugState
@@ -83,6 +105,9 @@ class SteerDriveController
         double stop_time{0.0};
         double align_time{0.0};
         double sync_time{0.0};
+        double phase_time{0.0};
+        int start_attempts{0};
+        bool verify_start{false};
         std::vector<double> dir_err;
         std::vector<double> th_target;
         std::vector<double> th_current;
@@ -99,7 +124,24 @@ class SteerDriveController
     void update(const Twist2D &cmd, const std::vector<ModuleState> &measured, double dt,
                 std::vector<ModuleState> &command);
 
+    // Restarts the state machine (e.g. after a clock jump or a feedback dropout). Keeps a FAULT.
+    // The next motion goes through WAIT_STOP -> STEER_ALIGN -> CREEP even if the wheels already point
+    // the right way, so the measured wheel speeds are checked again before DRIVE.
     void reset();
+
+    // Leaves FAULT; the next motion goes through the full, measured start sequence (as after reset()).
+    void clearFault();
+
+    bool faulted() const
+    {
+        return mode_ == Mode::FAULT;
+    }
+
+    // Why the controller entered FAULT (empty when not faulted).
+    const std::string &faultReason() const
+    {
+        return fault_reason_;
+    }
 
     const KinematicsModel &model() const
     {
@@ -117,6 +159,9 @@ class SteerDriveController
     double foldTarget(std::size_t i, double raw_angle, double &speed) const;
     double rampVelocity(double current, double target, double dt) const;
     double limitSteer(std::size_t i, double measured, double target, double dt);
+    void setMode(Mode mode);
+    void enterFault(const std::string &reason);
+    void startAttemptFailed(const std::string &what);
 
     std::shared_ptr<const KinematicsModel> model_;
     ControllerParams p_;
@@ -133,6 +178,12 @@ class SteerDriveController
     double stop_time_{0.0};
     double align_time_{0.0};
     double sync_time_{0.0};
+    double phase_time_{0.0};    // time in the current mode [s]
+    double phase_deadline_{0.0}; // WAIT_STOP / STEER_ALIGN / CREEP time limit [s]
+    int start_attempts_{0};
+    bool verify_start_{false}; // next motion must pass CREEP (set by reset() and clearFault())
+    std::vector<double> track_time_; // per wheel: time off its command in DRIVE [s]
+    std::string fault_reason_;
 
     DebugState debug_;
 };
