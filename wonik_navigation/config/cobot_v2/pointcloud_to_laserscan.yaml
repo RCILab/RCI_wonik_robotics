@@ -1,0 +1,17 @@
+# /points (3D LiDAR) -> /scan for cobot_v2. The scan is expressed in base_footprint, so heights are
+# above the floor and ranges are measured from the body centre.
+target_frame: base_footprint
+transform_tolerance: 0.05
+min_height: 0.10            # drop floor returns
+max_height: 1.80            # up to the top of the lift column
+# 720 beams of 0.5 deg. pointcloud_to_laserscan sizes the scan as ceil(span / increment); slam_toolbox
+# treats a span within one increment of 360 deg as a 360-deg lidar and expects round(span / increment).
+# span = 719.75 increments gives 720 for both.
+angle_min: -3.14159265
+angle_max: 3.13945102
+angle_increment: 0.00872665
+scan_time: 0.1
+range_min: 0.60             # the body (half-diagonal 0.55 m) shows up in the scan below this
+range_max: 30.0
+use_inf: true
+concurrency_level: 1

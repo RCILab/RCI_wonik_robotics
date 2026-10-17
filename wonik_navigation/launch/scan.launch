@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!-- 3D LiDAR /points -> 2D /scan (height band and range limits per robot in config/<robot>/). -->
+<launch>
+  <arg name="robot" default="cobot_v2"/>
+
+  <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="pointcloud_to_laserscan">
+    <remap from="cloud_in" to="/points"/>
+    <remap from="scan" to="/scan"/>
+    <rosparam file="$(find wonik_navigation)/config/$(arg robot)/pointcloud_to_laserscan.yaml" command="load"/>
+  </node>
+</launch>

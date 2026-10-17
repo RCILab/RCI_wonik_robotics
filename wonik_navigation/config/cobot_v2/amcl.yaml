@@ -1,0 +1,37 @@
+# AMCL for cobot_v2 on a saved map. QD robots move sideways, so the omni odometry model is used.
+odom_model_type: omni-corrected
+base_frame_id: base_footprint
+odom_frame_id: odom
+global_frame_id: map
+use_map_topic: true
+tf_broadcast: true
+transform_tolerance: 0.2
+
+# particles and update thresholds
+min_particles: 500
+max_particles: 3000
+kld_err: 0.01
+kld_z: 0.99
+update_min_d: 0.10
+update_min_a: 0.10
+resample_interval: 1
+recovery_alpha_slow: 0.0
+recovery_alpha_fast: 0.0
+gui_publish_rate: 10.0
+
+# odometry noise (omni model: odom_alpha5 is the lateral translation noise)
+odom_alpha1: 0.1
+odom_alpha2: 0.1
+odom_alpha3: 0.1
+odom_alpha4: 0.1
+odom_alpha5: 0.1
+
+# laser model on /scan (range_min/max as in pointcloud_to_laserscan.yaml)
+laser_model_type: likelihood_field
+laser_min_range: 0.6
+laser_max_range: 20.0
+laser_max_beams: 180
+laser_z_hit: 0.95
+laser_z_rand: 0.05
+laser_sigma_hit: 0.1
+laser_likelihood_max_dist: 2.0

@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>wonik_navigation</name>
+  <version>0.1.0</version>
+  <description>2D SLAM, localization and navigation configuration for the Wonik AGVs (real robot and simulation)</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>map_server</exec_depend>
+  <exec_depend>amcl</exec_depend>
+  <exec_depend>rviz</exec_depend>
+</package>

@@ -16,7 +16,8 @@ Clone this repository into the `src/` folder of a catkin workspace.
 | `qd_kinematics` | Steer-drive kinematics node (N-module swerve, single-drive tricycle). `/cmd_vel` → steer angles and wheel speeds with a stop → steer-align → creep → drive state machine; joint states → wheel odometry on `/odom` and TF `odom → base_footprint`. ROS-independent core with unit tests. Ported from `qd_kinematics2`. |
 | `wonik_cobot_v2_description` | URDF/xacro of cobot_v2 (QD #2 type) without the arm. Meshes are converted from Wonik's STEP; geometry (drive unit and omni wheel positions, wheel size, LiDAR mount) is in `config/geometry.yaml`. Gazebo-only tags are in `urdf/wonik_cobot_v2.gazebo.xacro`. |
 | `wonik_cobot_v2_bringup` | `base.launch`: robot model, controller configuration and kinematics node, shared by the real robot and the simulation. |
-| `wonik_gazebo` | Simulation only: `cobot_v2.launch` (world, robot, controllers, RViz) and the `qd_kinematic_base` Gazebo plugin. |
+| `wonik_gazebo` | Simulation only: `cobot_v2.launch` (world, robot, controllers, RViz), the `qd_kinematic_base` Gazebo plugin and worlds (`empty`, `wonik_hall`: a 16 m × 10 m test hall with a central island for a U-shaped route). |
+| `wonik_navigation` | 2D SLAM on the 3D LiDAR: `/points` → `pointcloud_to_laserscan` → `/scan` → `slam_toolbox` (`mapping.launch`), saved maps in `maps/`, AMCL localization on a saved map (`localization.launch`). |
 
 The robot-side packages talk to the drive units through ros_control (steer joints: position, drive joints: velocity) and `joint_states`, so on the real robot only the Gazebo layer is replaced by the drive unit driver.
 
@@ -30,6 +31,12 @@ cobot_v2 in Gazebo, driven with `teleop_twist_keyboard` (GIFs are sped up 2-3x).
 | Mode 1: straight, sideways, diagonal | Mode 2: arc turn | Mode 3: spin in place |
 |:---:|:---:|:---:|
 | <img src="docs/gifs/cobot_v2_mode1.gif" width="280"> | <img src="docs/gifs/cobot_v2_mode2.gif" width="280"> | <img src="docs/gifs/cobot_v2_mode3.gif" width="280"> |
+
+2D SLAM in the test hall (`world:=wonik_hall`): the robot is driven around the central island; red dots are the `/scan` points (GIFs at 12x speed).
+
+| Test hall (Gazebo) | Mapping (slam_toolbox) | Localization (AMCL on the saved map) |
+|:---:|:---:|:---:|
+| <img src="docs/images/wonik_hall_gazebo.png" width="280"> | <img src="docs/gifs/cobot_v2_mapping.gif" width="280"> | <img src="docs/gifs/cobot_v2_localization.gif" width="280"> |
 
 ## Quick start
 ```bash
@@ -47,6 +54,15 @@ rosrun teleop_twist_keyboard teleop_twist_keyboard.py
 ```
 
 Keys: `i`/`,` forward/back, `Shift+J`/`Shift+L` sideways, `j`/`l` turn in place, `u`/`o` arcs, `k` stop, `z` slower (start at about 0.3 m/s). When the steering direction changes a lot, the robot stops, re-aligns the wheels and creeps before driving, so a short pause after a key change is expected.
+
+Mapping and localization in the test hall:
+```bash
+roslaunch wonik_gazebo cobot_v2.launch world:=wonik_hall
+roslaunch wonik_navigation mapping.launch                # another terminal; drive with teleop
+rosrun map_server map_saver -f <dir>/wonik_hall          # when the map is complete
+
+roslaunch wonik_navigation localization.launch           # instead of mapping: AMCL on maps/wonik_hall
+```
 
 Unit tests: `catkin_make run_tests_qd_kinematics`.
 
