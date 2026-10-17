@@ -5,6 +5,7 @@
 
 #include <angles/angles.h>
 #include <base_local_planner/goal_functions.h>
+#include <local_planner_checks/footprint_checker.h>
 #include <nav_msgs/Path.h>
 #include <pluginlib/class_list_macros.h>
 #include <tf2/utils.h>
@@ -14,6 +15,8 @@ PLUGINLIB_EXPORT_CLASS(pure_pursuit_local_planner::PurePursuitLocalPlanner, nav_
 
 namespace pure_pursuit_local_planner
 {
+
+namespace checks = local_planner_checks;
 
 namespace
 {
@@ -78,6 +81,11 @@ PurePursuitLocalPlanner::PurePursuitLocalPlanner()
 {
 }
 
+bool PurePursuitLocalPlanner::odometryFresh(const ros::Time &now) const
+{
+    return std::fabs((now - m_odometry->header.stamp).toSec()) <= m_odom_timeout;
+}
+
 PurePursuitLocalPlanner::~PurePursuitLocalPlanner()
 {
 }
@@ -101,6 +109,13 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
 
     // compute delta time (ROS time, so the limits hold in simulation time as well)
     const ros::Time time_now = ros::Time::now();
+    if (!odometryFresh(time_now))
+    {
+        ROS_WARN_THROTTLE_NAMED(1.0, "PurePursuitLocalPlanner", "odometry is %.2f s old: not driving on it",
+                                (time_now - m_odometry->header.stamp).toSec());
+        m_last_cmd_vel = geometry_msgs::Twist();
+        return false;
+    }
     const double dt = std::min(std::max((time_now - m_last_time).toSec(), 0.0), 0.1);
     m_last_time = time_now;
 
@@ -152,6 +167,9 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
 
     double control_vel_x = 0;
     double control_yawrate = 0;
+    double planned_speed = 0;
+    double target_yawrate = 0; // yaw rate of the pursuit arc, before the low pass and slew limit
+    double rotation_left = 0;
 
     if (remaining <= m_limits.xy_goal_tolerance && m_state != STATE_ROTATING)
     {
@@ -169,6 +187,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
             control_yawrate = std::copysign(
                 std::max(std::min(profile, m_limits.max_vel_theta), m_limits.min_vel_theta), yaw_error);
             control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_limits.acc_lim_theta * dt);
+            rotation_left = yaw_error;
         }
         else if (is_stopped)
         {
@@ -192,48 +211,31 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
             vel_x = std::min(vel_x, m_max_curve_vel / std::fabs(curvature));
         }
         vel_x = std::max(vel_x, m_limits.min_vel_trans);
-
-        // footprint check along the path ahead, up to the braking distance plus min_stop_dist
-        const double check_dist = vel_x * vel_x / (2 * m_dec_lim_x) + m_min_stop_dist;
-        base_local_planner::CostmapModel world_model(*m_cost_map->getCostmap());
-        const std::vector<geometry_msgs::Point> footprint = m_cost_map->getRobotFootprint();
-        bool blocked = false;
-        double travelled = 0;
-        for (std::size_t i = m_closest; i + 1 < local_plan.size() && travelled <= check_dist && !blocked; ++i)
-        {
-            const tf2::Vector3 d = local_plan[i + 1] - local_plan[i];
-            travelled += d.length();
-            if (travelled > 0.05 || i == m_closest)
-            {
-                blocked = world_model.footprintCost(local_plan[i].x(), local_plan[i].y(), ::atan2(d.y(), d.x()),
-                                                    footprint) == -1;
-            }
-        }
-        if (blocked)
-        {
-            if (m_state != STATE_BLOCKED)
-            {
-                ROS_WARN_NAMED("PurePursuitLocalPlanner", "obstacle on the path ahead, stopping");
-            }
-            m_state = STATE_BLOCKED;
-            vel_x = 0;
-        }
-        else
-        {
-            m_state = STATE_TRANSLATING;
-        }
+        planned_speed = vel_x;
 
         control_vel_x = std::min(vel_x, m_last_cmd_vel.linear.x + m_limits.acc_lim_x * dt);
 
         // yaw rate = v * curvature, low passed and slew limited (smooth re-steering of the drive units)
         control_yawrate = control_vel_x * curvature;
+        target_yawrate = control_yawrate;
         control_yawrate = control_yawrate * m_low_pass_gain + m_last_cmd_vel.angular.z * (1 - m_low_pass_gain);
         control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_trans_acc_lim_theta * dt);
+        m_state = STATE_TRANSLATING;
     }
 
-    cmd_vel.linear.x = std::min(std::max(control_vel_x, 0.0), m_limits.max_vel_x);
-    cmd_vel.angular.z = std::min(std::max(control_yawrate, -m_limits.max_vel_theta), m_limits.max_vel_theta);
-    m_last_cmd_vel = cmd_vel;
+    geometry_msgs::Twist cmd;
+    cmd.linear.x = std::min(std::max(control_vel_x, 0.0), m_limits.max_vel_x);
+    cmd.angular.z = std::min(std::max(control_yawrate, -m_limits.max_vel_theta), m_limits.max_vel_theta);
+    if (!commandIsFree(cmd, planned_speed, target_yawrate, rotation_left, local_plan, robot, yaw))
+    {
+        if (m_state == STATE_TRANSLATING)
+        {
+            m_state = STATE_BLOCKED; // re-evaluated every cycle; continues once the way is clear
+        }
+        cmd = geometry_msgs::Twist();
+    }
+    cmd_vel = cmd;
+    m_last_cmd_vel = cmd;
 
     // publish the path ahead (local frame) for visualization
     nav_msgs::Path local_path;
@@ -252,11 +254,87 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
     return true;
 }
 
+bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::Twist &cmd, double planned_speed,
+                                            double target_yawrate, double rotation_left,
+                                            const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot,
+                                            double yaw)
+{
+    const double v_cmd = std::fabs(cmd.linear.x);
+    if (v_cmd < 1e-3 && std::fabs(cmd.angular.z) < 1e-3)
+    {
+        return true; // stopping
+    }
+    costmap_2d::Costmap2D *costmap = m_cost_map->getCostmap();
+    boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*costmap->getMutex());
+    const checks::FootprintChecker checker(*costmap, m_cost_map->getRobotFootprint());
+    const checks::Pose2D start{robot.getOrigin().x(), robot.getOrigin().y(), yaw};
+
+    checks::CheckResult result;
+    const char *what = "";
+    if (v_cmd >= 1e-3)
+    {
+        // over the distance the base needs to stop (measured, commanded or planned speed) plus min_stop_dist:
+        // 1. the motion this controller drives from where the robot is (it may be off the path, or cut a
+        //    corner): the commanded speed, the yaw rate ramping from the command toward the pursuit arc at
+        //    trans_acc_lim_theta, as the next control steps will command it
+        const double dist = checks::stoppingDistance(m_odometry->twist.twist.linear.x, std::max(v_cmd, planned_speed),
+                                                     m_dec_lim_x, m_collision_latency, m_min_stop_dist);
+        std::vector<checks::Pose2D> motion{start};
+        double wz = cmd.angular.z;
+        const double dt = 0.05;
+        for (double s = 0; s < dist && motion.size() < 2000; s += v_cmd * dt)
+        {
+            wz = slew(wz, target_yawrate, m_trans_acc_lim_theta * dt);
+            motion.push_back(checks::integrateTwist(motion.back(), cmd.linear.x, 0, wz, dt));
+        }
+        result = checker.checkPath(motion, dist);
+        what = "driving";
+        // 2. the path ahead from its closest point
+        if (result.free())
+        {
+            std::vector<checks::Pose2D> path;
+            for (std::size_t i = m_closest; i < local_plan.size(); ++i)
+            {
+                const tf2::Vector3 &a = local_plan[i];
+                const tf2::Vector3 &b = local_plan[std::min(i + 1, local_plan.size() - 1)];
+                const double heading = (b - a).length() > 1e-6 ? ::atan2(b.y() - a.y(), b.x() - a.x())
+                                                               : (path.empty() ? yaw : path.back().yaw);
+                path.push_back({a.x(), a.y(), heading});
+            }
+            result = checker.checkPath(path, dist);
+            what = "path ahead";
+        }
+    }
+    else
+    {
+        result = checker.checkRotation(start, rotation_left + std::copysign(m_rotation_margin, cmd.angular.z));
+        what = "turning in place";
+    }
+
+    if (!result.free())
+    {
+        if (!m_blocked)
+        {
+            ROS_WARN_NAMED("PurePursuitLocalPlanner", "%s: %s after %.2f m / %.0f deg, stopping", what,
+                           checks::toString(result.collision), result.distance,
+                           angles::to_degrees(std::fabs(result.angle)));
+        }
+        m_blocked = true;
+        return false;
+    }
+    if (m_blocked)
+    {
+        ROS_INFO_NAMED("PurePursuitLocalPlanner", "the way is clear again");
+    }
+    m_blocked = false;
+    return true;
+}
+
 bool PurePursuitLocalPlanner::isGoalReached()
 {
     boost::mutex::scoped_lock lock(m_odometry_mutex);
 
-    if (!m_odometry)
+    if (!m_odometry || !odometryFresh(ros::Time::now()))
     {
         return false;
     }
@@ -264,8 +342,26 @@ bool PurePursuitLocalPlanner::isGoalReached()
     {
         return true;
     }
-    const bool is_reached = m_state == STATE_GOAL &&
-        base_local_planner::stopped(*m_odometry, m_limits.theta_stopped_vel, m_limits.trans_stopped_vel);
+    bool is_reached = false;
+    if (m_state == STATE_GOAL)
+    {
+        // the end of the path by actual position (any heading: the route controller turns afterwards)
+        tf2::Stamped<tf2::Transform> global_to_local;
+        try
+        {
+            auto msg = m_tf->lookupTransform(m_local_frame, m_global_frame, ros::Time(), ros::Duration(0));
+            tf2::fromMsg(msg, global_to_local);
+        }
+        catch (...)
+        {
+            return false;
+        }
+        const geometry_msgs::Point &e = m_global_plan.back().pose.position;
+        const tf2::Vector3 end = global_to_local * tf2::Vector3(e.x, e.y, 0);
+        const checks::Pose2D robot{m_odometry->pose.pose.position.x, m_odometry->pose.pose.position.y, 0};
+        is_reached = checks::goalReached(robot, {end.x(), end.y(), 0}, base_local_planner::stopped(
+            *m_odometry, m_limits.theta_stopped_vel, m_limits.trans_stopped_vel), m_limits.xy_goal_tolerance, M_PI);
+    }
     if (!m_is_goal_reached || !is_reached)
     {
         m_first_goal_reached_time = ros::Time::now();
@@ -286,12 +382,13 @@ bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::PoseStamp
     m_last_time = ros::Time::now();
     m_first_goal_reached_time = ros::Time();
     m_is_goal_reached = false;
+    m_blocked = false;
     // A replanned path while driving continues from the current motion: keep translating unless the
     // new path starts far off the heading (decided in the next control step).
     m_last_cmd_vel = geometry_msgs::Twist();
     {
         boost::mutex::scoped_lock lock(m_odometry_mutex);
-        if (m_odometry)
+        if (m_odometry && odometryFresh(ros::Time::now()))
         {
             m_last_cmd_vel.linear.x = std::max(m_odometry->twist.twist.linear.x, 0.0);
             m_last_cmd_vel.angular.z = m_odometry->twist.twist.angular.z;
@@ -324,6 +421,9 @@ void PurePursuitLocalPlanner::initialize(std::string name, tf2_ros::Buffer *tf, 
     m_trans_acc_lim_theta = private_nh.param<double>("trans_acc_lim_theta", 0.4);
     m_low_pass_gain = private_nh.param<double>("low_pass_gain", 0.5);
     m_min_stop_dist = private_nh.param<double>("min_stop_dist", 0.3);
+    m_odom_timeout = private_nh.param<double>("odom_timeout", 0.5);
+    m_collision_latency = private_nh.param<double>("collision_latency", 0.3);
+    m_rotation_margin = private_nh.param<double>("rotation_margin", 0.1);
     m_goal_tune_time = private_nh.param<double>("goal_tune_time", 0.3);
     m_local_frame = private_nh.param<std::string>("local_frame", "odom");
     const std::string odom_topic = private_nh.param<std::string>("odom_topic", "/odom");

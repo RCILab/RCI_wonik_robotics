@@ -7,6 +7,7 @@
 #include <base_local_planner/local_planner_limits.h>
 #include <boost/thread.hpp>
 #include <costmap_2d/costmap_2d_ros.h>
+#include <geometry_msgs/Twist.h>
 #include <nav_core/base_local_planner.h>
 #include <nav_msgs/Odometry.h>
 #include <tf2/LinearMath/Transform.h>
@@ -19,7 +20,14 @@ namespace stop_go_local_planner
 // The plan is split into straight segments where its direction changes by more than
 // corner_angle. Each segment starts with an in-place rotation to its heading (if the heading
 // error exceeds start_yaw_error), is followed with pure pursuit (yaw rate = v * curvature) and ends
-// in a stop. No obstacle avoidance: the robot keeps to the route.
+// in a stop. A segment end (and the goal) counts only when the robot is within xy_goal_tolerance of
+// it; a small miss (sideways, overshoot, or a localization correction) is driven out sideways
+// (ADJUSTING, holonomic bases), a larger one by approaching the point again as a new segment.
+//
+// No obstacle avoidance: the robot keeps to the route. Every command is checked against the local
+// costmap with the swept footprint (local_planner_checks): driving over the stopping distance from the
+// measured, commanded and planned speed, turning in place over the whole remaining turn. A blocked
+// command becomes a stop, and the robot waits until the way is clear.
 class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
 {
   public:
@@ -33,6 +41,10 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
 
   private:
     void odomCallback(const nav_msgs::Odometry::ConstPtr &msg);
+    bool odometryFresh(const ros::Time &now) const;
+    // Collision check of cmd from the robot pose; rotation_left is the rest of an in-place turn.
+    bool commandIsFree(const geometry_msgs::Twist &cmd, double planned_speed, double rotation_left,
+                       const tf2::Vector3 &pos, double yaw);
 
   private:
     tf2_ros::Buffer *m_tf = nullptr;
@@ -58,12 +70,20 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
     double m_low_pass_gain = 0;   // yaw-rate low pass while translating (1 = off)
     double m_goal_tune_time = 0;  // [s] stay within tolerance this long before the goal counts
+    bool m_holonomic = true;      // the base can move sideways (ADJUSTING)
+    double m_adjust_max_dist = 0; // [m] larger misses of a segment end are approached again as a segment
+    double m_adjust_vel = 0;      // [m/s] speed limit while ADJUSTING
+    double m_odom_timeout = 0;    // [s] older odometry is not used (the controller fails)
+    double m_collision_latency = 0; // [s] reaction time in the stopping distance
+    double m_collision_margin = 0;  // [m] added to the stopping distance
+    double m_rotation_margin = 0;   // [rad] added to the remaining turn in the rotation check
 
     enum state_t
     {
         STATE_IDLE,
         STATE_ROTATING,
         STATE_TRANSLATING,
+        STATE_ADJUSTING,
         STATE_GOAL
     };
 
@@ -72,6 +92,8 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
     ros::Time m_last_time;
     ros::Time m_first_goal_reached_time;
     bool m_is_goal_reached = false;
+    bool m_blocked = false;
+    bool m_started = false; // the first control step of the current plan has run
     uint64_t m_update_counter = 0;
     geometry_msgs::Twist m_last_cmd_vel;
 };

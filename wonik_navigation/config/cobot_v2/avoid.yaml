@@ -13,7 +13,10 @@ avoid:
   lookahead_time: 0.5
   start_yaw_error: 0.7       # rotate in place first if the path starts > 40 deg off (> 80 deg while moving)
   max_curve_vel: 0.3         # [rad/s] yaw rate in curves
-  min_stop_dist: 0.3         # footprint check reaches this far past the braking distance
+  min_stop_dist: 0.3         # footprint checks reach this far past the stopping distance
+  collision_latency: 0.3     # [s] reaction time in the stopping distance
+  rotation_margin: 0.1
+  odom_timeout: 0.5
   xy_goal_tolerance: 0.1
   trans_stopped_vel: 0.02
   rot_stopped_vel: 0.02

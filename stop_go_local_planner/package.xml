@@ -10,6 +10,7 @@
 
   <depend>angles</depend>
   <depend>base_local_planner</depend>
+  <depend>local_planner_checks</depend>
   <depend>costmap_2d</depend>
   <depend>nav_core</depend>
   <depend>nav_msgs</depend>

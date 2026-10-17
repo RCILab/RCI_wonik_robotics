@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>local_planner_checks</name>
+  <version>0.1.0</version>
+  <description>Checks shared by the local planners (stop_go_local_planner, pure_pursuit_local_planner): swept-footprint collision checks on the costmap (translation, rotation in place, paths; unobserved and off-map cells count as blocked), stopping distance from the measured speed, goal reached by actual position</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>angles</depend>
+  <depend>costmap_2d</depend>
+  <depend>geometry_msgs</depend>
+
+  <test_depend>rosunit</test_depend>
+</package>

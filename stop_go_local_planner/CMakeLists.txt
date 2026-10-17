@@ -7,6 +7,7 @@ add_compile_options(-Wall -Wextra)
 
 find_package(catkin REQUIRED COMPONENTS
   angles
+  local_planner_checks
   base_local_planner
   costmap_2d
   nav_core
@@ -21,7 +22,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
   INCLUDE_DIRS include
   LIBRARIES ${PROJECT_NAME}
-  CATKIN_DEPENDS angles base_local_planner costmap_2d nav_core nav_msgs pluginlib roscpp tf2 tf2_geometry_msgs tf2_ros
+  CATKIN_DEPENDS angles local_planner_checks base_local_planner costmap_2d nav_core nav_msgs pluginlib roscpp tf2 tf2_geometry_msgs tf2_ros
 )
 
 include_directories(include)

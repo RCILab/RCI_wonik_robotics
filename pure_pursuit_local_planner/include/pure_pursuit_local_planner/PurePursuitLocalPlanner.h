@@ -4,10 +4,10 @@
 #include <string>
 #include <vector>
 
-#include <base_local_planner/costmap_model.h>
 #include <base_local_planner/local_planner_limits.h>
 #include <boost/thread.hpp>
 #include <costmap_2d/costmap_2d_ros.h>
+#include <geometry_msgs/Twist.h>
 #include <nav_core/base_local_planner.h>
 #include <nav_msgs/Odometry.h>
 #include <tf2/LinearMath/Transform.h>
@@ -19,8 +19,12 @@ namespace pure_pursuit_local_planner
 // Pure pursuit path follower for curved paths (e.g. a global planner's detour around an obstacle),
 // structured after neo_local_planner (Neobotix). Rotates in place first if the path starts off the
 // robot's heading, then follows without stopping: yaw rate = v * curvature, speed limited by the
-// curvature (max_curve_vel), a braking profile toward the end of the path and a footprint check on
-// the local costmap along the path ahead (stops instead of hitting an obstacle).
+// curvature (max_curve_vel) and a braking profile toward the end of the path. Every command is checked
+// on the local costmap with the swept footprint (local_planner_checks): the motion the controller drives
+// from the robot's actual pose (yaw rate ramping toward the pursuit arc) and the path ahead, both over
+// the stopping distance from the measured,
+// commanded or planned speed plus min_stop_dist, and in-place turns over the whole remaining turn.
+// A blocked command becomes a stop (STATE_BLOCKED); the route supervisor replans the detour.
 class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
 {
   public:
@@ -34,6 +38,10 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
 
   private:
     void odomCallback(const nav_msgs::Odometry::ConstPtr &msg);
+    bool odometryFresh(const ros::Time &now) const;
+    bool commandIsFree(const geometry_msgs::Twist &cmd, double planned_speed, double target_yawrate,
+                       double rotation_left, const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot,
+                       double yaw);
 
   private:
     tf2_ros::Buffer *m_tf = nullptr;
@@ -60,6 +68,9 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     double m_low_pass_gain = 0;       // yaw-rate low pass while translating (1 = off)
     double m_min_stop_dist = 0;       // [m] footprint check reaches this far beyond the braking distance
     double m_goal_tune_time = 0;      // [s]
+    double m_odom_timeout = 0;        // [s] older odometry is not used (the controller fails)
+    double m_collision_latency = 0;   // [s] reaction time in the stopping distance
+    double m_rotation_margin = 0;     // [rad] added to the remaining turn in the rotation check
 
     enum state_t
     {
@@ -75,6 +86,7 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     ros::Time m_last_time;
     ros::Time m_first_goal_reached_time;
     bool m_is_goal_reached = false;
+    bool m_blocked = false;
     geometry_msgs::Twist m_last_cmd_vel;
 };
 
