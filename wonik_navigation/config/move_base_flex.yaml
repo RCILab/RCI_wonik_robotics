@@ -19,11 +19,24 @@ recovery_enabled: false
 recovery_behaviors: []
 
 controllers:
-  - name: stop_go
+  - name: stop_go          # the route: straight legs, stop and turn at waypoints
     type: stop_go_local_planner/StopGoLocalPlanner
-  - name: stop_go_slow
+  - name: stop_go_slow     # the same, speed-limited
     type: stop_go_local_planner/StopGoLocalPlanner
+  - name: avoid            # detours around obstacles (curved paths from the global planner)
+    type: pure_pursuit_local_planner/PurePursuitLocalPlanner
 
 planners:
   - name: global_planner
     type: global_planner/GlobalPlanner
+
+global_planner:
+  use_dijkstra: true
+  use_quadratic: true
+  use_grid_path: false
+  allow_unknown: true
+  default_tolerance: 0.2
+  lethal_cost: 253
+  neutral_cost: 50
+  cost_factor: 3.0
+  visualize_potential: false

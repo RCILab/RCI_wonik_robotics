@@ -1,14 +1,18 @@
 <?xml version="1.0"?>
 <!-- Drive a fixed route through move_base_flex (start navigation.launch first).
-       roslaunch wonik_navigation route.launch [route:=wonik_hall_u] [controller:=stop_go]
-     Switch the controller mid-route:
+       roslaunch wonik_navigation route.launch [route:=wonik_hall_u] [zones:=wonik_hall]
+     In avoid zones the robot drives around obstacles and rejoins the route; elsewhere it follows the
+     route stop-and-go and stops for obstacles. Overrides:
+       rostopic pub -1 /route_supervisor/mode std_msgs/String avoid            (auto | stop_go | avoid)
        rostopic pub -1 /route_supervisor/controller std_msgs/String stop_go_slow -->
 <launch>
   <arg name="route" default="wonik_hall_u"/>
+  <arg name="zones" default="wonik_hall"/>
   <arg name="controller" default="stop_go"/>
 
   <node pkg="wonik_navigation" type="route_supervisor.py" name="route_supervisor" output="screen">
     <param name="route" value="$(find wonik_navigation)/config/routes/$(arg route).yaml"/>
+    <param name="zones" value="$(find wonik_navigation)/config/zones/$(arg zones).yaml"/>
     <param name="controller" value="$(arg controller)"/>
   </node>
 </launch>

@@ -1,0 +1,11 @@
+# Zones of wonik_hall in the map frame. avoid: obstacles on the route are driven around and the robot
+# rejoins the route at the zone exit. stop: the robot stops for an obstacle and continues when it is
+# gone. Outside every zone the robot also stops for obstacles.
+frame_id: map
+zones:
+  - name: avoid_bottom
+    type: avoid
+    polygon: [[3.0, -1.6], [9.0, -1.6], [9.0, 1.8], [3.0, 1.8]]
+  - name: stop_top
+    type: stop
+    polygon: [[3.0, 4.2], [9.0, 4.2], [9.0, 7.6], [3.0, 7.6]]

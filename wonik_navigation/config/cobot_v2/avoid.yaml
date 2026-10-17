@@ -1,0 +1,20 @@
+# pure_pursuit_local_planner for cobot_v2 detours (parameter names follow neo_local_planner)
+avoid:
+  max_vel_x: 0.5
+  min_trans_vel: 0.05
+  acc_lim_x: 0.3
+  dec_lim_x: 0.3
+  max_rot_vel: 0.6
+  min_rot_vel: 0.05
+  acc_lim_theta: 0.6
+  trans_acc_lim_theta: 0.4
+  low_pass_gain: 0.5
+  lookahead_dist: 1.0
+  lookahead_time: 0.5
+  start_yaw_error: 0.7       # rotate in place first if the path starts > 40 deg off (> 80 deg while moving)
+  max_curve_vel: 0.3         # [rad/s] yaw rate in curves
+  min_stop_dist: 0.3         # footprint check reaches this far past the braking distance
+  xy_goal_tolerance: 0.1
+  trans_stopped_vel: 0.02
+  rot_stopped_vel: 0.02
+  goal_tune_time: 0.3

@@ -16,10 +16,17 @@
   <exec_depend>mbf_msgs</exec_depend>
   <exec_depend>global_planner</exec_depend>
   <exec_depend>stop_go_local_planner</exec_depend>
+  <exec_depend>pure_pursuit_local_planner</exec_depend>
   <exec_depend>actionlib</exec_depend>
   <exec_depend>rospy</exec_depend>
+  <exec_depend>tf</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rviz</exec_depend>
 </package>
