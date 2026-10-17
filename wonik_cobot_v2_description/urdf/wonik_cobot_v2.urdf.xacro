@@ -2,12 +2,14 @@
 <!-- Wonik cobot_v2 (QD #2 type). Geometry comes from config/geometry.yaml; the cobot arm is not modelled.
      Meshes are visual only (converted from cobot_v2_asm.stp); collisions are primitives.
      Everything Gazebo-specific is in wonik_cobot_v2.gazebo.xacro (ignored outside Gazebo).
-       xacro wonik_cobot_v2.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] -->
+       xacro wonik_cobot_v2.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] [depth_camera:=false] -->
 <robot name="wonik_cobot_v2" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <xacro:arg name="geometry" default="$(find wonik_cobot_v2_description)/config/geometry.yaml"/>
   <xacro:arg name="sim_drive" default="kinematic"/>
   <xacro:arg name="lidar_gpu" default="false"/>
+  <!-- Gazebo depth camera sensor; it needs an X display (rendering) to produce images -->
+  <xacro:arg name="depth_camera" default="true"/>
 
   <xacro:include filename="$(find velodyne_description)/urdf/HDL-32E.urdf.xacro"/>
   <xacro:include filename="$(find wonik_cobot_v2_description)/urdf/wonik_cobot_v2.gazebo.xacro"/>
@@ -155,6 +157,32 @@
     <origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
   </xacro:HDL-32E>
 
-  <xacro:cobot_v2_gazebo sim_drive="$(arg sim_drive)"/>
+  <!-- Front depth camera (RealSense D435). camera_depth_optical_frame: z forward, x right, y down. -->
+  <xacro:property name="c" value="${g['depth_camera_xyz']}"/>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="${c[0]} ${c[1]} ${c[2]}" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+  </joint>
+  <link name="camera_link">
+    <inertial>
+      <mass value="0.07"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+    <visual>
+      <origin xyz="-0.0125 0 0"/>
+      <geometry><box size="0.025 0.09 0.025"/></geometry>
+      <material name="body_grey"/>
+    </visual>
+  </link>
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi / 2} 0 ${-pi / 2}"/>
+    <parent link="camera_link"/>
+    <child link="camera_depth_optical_frame"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+
+  <xacro:cobot_v2_gazebo sim_drive="$(arg sim_drive)" depth_camera="$(arg depth_camera)"/>
 
 </robot>

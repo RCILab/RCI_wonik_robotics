@@ -13,6 +13,8 @@
   <arg name="gui" default="true"/>
   <arg name="rviz" default="true"/>
   <arg name="lidar_gpu" default="false"/>
+  <!-- front depth camera; its images need an X display (rendering) -->
+  <arg name="depth_camera" default="true"/>
   <arg name="x" default="0.0"/>
   <arg name="y" default="0.0"/>
   <arg name="yaw" default="0.0"/>
@@ -25,7 +27,7 @@
   </include>
 
   <include file="$(find wonik_cobot_v2_bringup)/launch/base.launch">
-    <arg name="xacro_args" value="sim_drive:=$(arg sim_drive) lidar_gpu:=$(arg lidar_gpu)"/>
+    <arg name="xacro_args" value="sim_drive:=$(arg sim_drive) lidar_gpu:=$(arg lidar_gpu) depth_camera:=$(arg depth_camera)"/>
   </include>
 
   <node pkg="gazebo_ros" type="spawn_model" name="spawn_cobot_v2" output="screen"

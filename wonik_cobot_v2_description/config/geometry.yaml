@@ -29,3 +29,7 @@ body_mass: 100.0
 # 3D LiDAR mount (base_footprint frame, sensor base). Velodyne HDL-32E stands in for the
 # Livox Mid-360 until its mount position is decided; this spot is free deck space front-left.
 lidar_xyz: [0.30, 0.15, 0.851]
+
+# Front depth camera (RealSense D435 in the CAD at the front face, 0.24 m high), looking forward.
+# Placed just in front of the bumper (0.449 m) so the body mesh does not block it in Gazebo.
+depth_camera_xyz: [0.45, 0.0, 0.24]
