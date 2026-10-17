@@ -9,17 +9,19 @@ wonik_navigation.safety.gate_command:
   - otherwise keeps a protective field in the direction of travel: a translation stops when the nearest
     obstacle in the corridor(s) it moves into (obstacle_distances) is closer than the distance the base
     needs to stop from its speed (~latency at speed, braking at ~dec, plus ~margin); turning in place
-    stops for an obstacle within the turn radius (obstacle_near)
+    stops when the footprint would touch an obstacle (obstacle_turn_clearance, in the direction of the
+    turn) within the angle the base needs to stop turning (~latency at the yaw rate, braking at
+    ~dec_theta, plus ~margin_theta)
 
-The speed is the faster of the command and the last command sent (the base cannot be faster than it
-was told). The supervisor state counts only while it is current: the supervisor publishes it at 10 Hz,
-and a state older than ~state_timeout (supervisor dead or stuck) is treated as "no detour". Without a
-supervisor the gate always applies the obstacle stops.
+The speed and yaw rate are the faster of the command and the last command sent (the base cannot be
+faster than it was told). The supervisor state counts only while it is current: the supervisor
+publishes it at 10 Hz, and a state older than ~state_timeout (supervisor dead or stuck) is treated as
+"no detour". Without a supervisor the gate always applies the obstacle stops.
 
 Every 50 ms the command in force (the last cmd_vel_raw, or none once it is older than ~raw_timeout) is
-judged again with the current inputs; when the result is more restrictive than what was last sent
-(an obstacle came within the turn radius during a turn, a sensor failed, move_base_flex went silent,
-...), it is sent at once instead of waiting for the next raw command or the base's own timeout.
+judged again with the current inputs; when the result is more restrictive than what was last sent (an
+obstacle came into the way of a turn, a sensor failed, move_base_flex went silent, ...), it is sent at
+once instead of waiting for the next raw command or the base's own timeout.
 
 Parameters
   ~timeout        [s] detector messages older than this: detector silent (default 0.5)
@@ -28,8 +30,10 @@ Parameters
   ~dec            [m/s^2] braking assumed for the protective field (default 0.5, below the base's 0.6)
   ~latency        [s] reaction time in the protective field (default 0.3)
   ~margin         [m] protective field beyond the stopping distance (default 0.3)
+  ~dec_theta      [rad/s^2] braking of a turn assumed for its protective angle (default 0.5)
+  ~margin_theta   [rad] protective angle beyond the stopping angle of a turn (default 0.15)
 Topics
-  cmd_vel_raw (in), obstacle_distances, obstacle_near, obstacle_detector/sensors_ok (in),
+  cmd_vel_raw (in), obstacle_distances, obstacle_turn_clearance, obstacle_detector/sensors_ok (in),
   route_supervisor/state (in), cmd_vel (out)
   ~blocked    (std_msgs/Bool, out, latched) a forward command at the current speed (at least 0.3 m/s) would
               be stopped now
@@ -49,7 +53,8 @@ class CmdVelGate:
         self.timeout = rospy.get_param("~timeout", 0.5)
         self.state_timeout = rospy.get_param("~state_timeout", 0.5)
         self.raw_timeout = rospy.get_param("~raw_timeout", 0.5)
-        self.field = {k: rospy.get_param("~" + k, d) for k, d in (("dec", 0.5), ("latency", 0.3), ("margin", 0.3))}
+        self.field = {k: rospy.get_param("~" + k, d) for k, d in (("dec", 0.5), ("latency", 0.3), ("margin", 0.3),
+                                                                  ("dec_theta", 0.5), ("margin_theta", 0.15))}
         self.inputs = {}  # name -> (value, receive time)
         self.reason = ""
         self.lock = threading.Lock()
@@ -58,7 +63,8 @@ class CmdVelGate:
         self.pub = rospy.Publisher("cmd_vel", Twist, queue_size=1)
         self.blocked_pub = rospy.Publisher("~blocked", Bool, queue_size=1, latch=True)
         self.reason_pub = rospy.Publisher("~reason", String, queue_size=1, latch=True)
-        for name, topic, kind in (("dist", "obstacle_distances", Float32MultiArray), ("near", "obstacle_near", Bool),
+        for name, topic, kind in (("dist", "obstacle_distances", Float32MultiArray),
+                                  ("turn", "obstacle_turn_clearance", Float32MultiArray),
                                   ("sensors_ok", "obstacle_detector/sensors_ok", Bool),
                                   ("state", "route_supervisor/state", String)):
             rospy.Subscriber(topic, kind, self.on_input, callback_args=name, queue_size=1)
@@ -69,6 +75,9 @@ class CmdVelGate:
         value = msg.data
         if name == "dist" and len(value) != N_DIRECTIONS:
             rospy.logwarn_throttle(5.0, "cmd_vel_gate: obstacle_distances needs %d values", N_DIRECTIONS)
+            return
+        if name == "turn" and len(value) != 2:
+            rospy.logwarn_throttle(5.0, "cmd_vel_gate: obstacle_turn_clearance needs 2 values")
             return
         self.inputs[name] = (value, rospy.get_time())
 
@@ -82,13 +91,13 @@ class CmdVelGate:
 
     def decide(self, cmd):
         dist = self.current("dist", self.timeout)
-        near = self.current("near", self.timeout)
+        turn = self.current("turn", self.timeout)
         sensors_ok = self.current("sensors_ok", self.timeout)
-        fresh = dist is not None and near is not None and sensors_ok is not None
+        fresh = dist is not None and turn is not None and sensors_ok is not None
         avoid_active = self.current("state", self.state_timeout) == "AVOID"
         speed = (self.out[0] ** 2 + self.out[1] ** 2) ** 0.5
         return gate_command(cmd, fresh, bool(sensors_ok), list(dist) if fresh else [0.0] * N_DIRECTIONS,
-                            bool(near), avoid_active, speed, **self.field)
+                            list(turn) if fresh else [0.0, 0.0], avoid_active, speed, self.out[2], **self.field)
 
     def report(self, reason):
         reason = reason or ""

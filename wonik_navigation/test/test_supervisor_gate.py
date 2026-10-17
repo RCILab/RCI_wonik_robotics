@@ -30,7 +30,7 @@ class SupervisorGateTest(unittest.TestCase):
         rospy.Subscriber("/move_base_flex/exe_controllers", String, self.record, callback_args=self.controllers)
         self.zone = rospy.Publisher("/current_zone", String, queue_size=1)
         self.dist = rospy.Publisher("/obstacle_distances", Float32MultiArray, queue_size=1)
-        self.near = rospy.Publisher("/obstacle_near", Bool, queue_size=1)
+        self.turn = rospy.Publisher("/obstacle_turn_clearance", Float32MultiArray, queue_size=1)
         self.ok = rospy.Publisher("/obstacle_detector/sensors_ok", Bool, queue_size=1)
         rospy.Timer(rospy.Duration(0.05), self.publish_inputs)
 
@@ -41,7 +41,7 @@ class SupervisorGateTest(unittest.TestCase):
     def publish_inputs(self, _):
         self.zone.publish(String(data="avoid"))
         self.dist.publish(Float32MultiArray(data=AHEAD))
-        self.near.publish(Bool(data=False))
+        self.turn.publish(Float32MultiArray(data=[float("inf"), float("inf")]))
         self.ok.publish(Bool(data=True))
 
     def test_avoid_entry(self):

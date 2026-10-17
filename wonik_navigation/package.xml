@@ -9,6 +9,8 @@
   <buildtool_depend>catkin</buildtool_depend>
 
   <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>nodelet</exec_depend>
+  <exec_depend>pcl_ros</exec_depend>
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>map_server</exec_depend>
   <exec_depend>amcl</exec_depend>

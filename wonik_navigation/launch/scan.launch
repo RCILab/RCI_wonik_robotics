@@ -1,10 +1,18 @@
 <?xml version="1.0"?>
-<!-- 3D LiDAR /points -> 2D /scan (height band and range limits per robot in config/<robot>/). -->
+<!-- 3D LiDAR /points -> 2D /scan: the robot itself is cut out of the cloud (box in
+     config/<robot>/self_filter.yaml, /points_self_filtered), then the cloud is flattened (height band and
+     range limits in config/<robot>/pointcloud_to_laserscan.yaml). -->
 <launch>
   <arg name="robot" default="cobot_v2"/>
 
+  <node pkg="nodelet" type="nodelet" name="self_filter" args="standalone pcl/CropBox">
+    <remap from="~input" to="/points"/>
+    <remap from="~output" to="/points_self_filtered"/>
+    <rosparam file="$(find wonik_navigation)/config/$(arg robot)/self_filter.yaml" command="load"/>
+  </node>
+
   <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="pointcloud_to_laserscan">
-    <remap from="cloud_in" to="/points"/>
+    <remap from="cloud_in" to="/points_self_filtered"/>
     <remap from="scan" to="/scan"/>
     <rosparam file="$(find wonik_navigation)/config/$(arg robot)/pointcloud_to_laserscan.yaml" command="load"/>
   </node>

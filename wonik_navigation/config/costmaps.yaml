@@ -1,4 +1,5 @@
-# Costmaps of move_base_flex. The robot footprint comes from config/<robot>/footprint.yaml.
+# Costmaps of move_base_flex. The robot footprint comes from config/<robot>/footprint.yaml (loaded into
+# both costmaps by navigation.launch).
 # Both costmaps take obstacles from /scan and the front depth camera, so the global planner plans
 # detours around obstacles that are not in the map (navigation.launch drops the depth camera with
 # depth_camera:=false). expected_update_rate: a source silent for longer makes the costmap "not

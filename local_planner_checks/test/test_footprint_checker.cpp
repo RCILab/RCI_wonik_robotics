@@ -140,6 +140,53 @@ TEST(FootprintChecker, InflationIsNotACollision)
     EXPECT_TRUE(checker.checkRotation({0, 0, 0}, M_PI).free());
 }
 
+// SD footprint (config/sd/footprint.yaml): the body ahead of the turning centre (fork roller axle) and a
+// narrow fork behind it, not convex.
+std::vector<geometry_msgs::Point> sdFootprint()
+{
+    const double xy[8][2] = {{1.068, 0.403},  {0.612, 0.403},  {0.612, 0.172},  {-0.132, 0.172},
+                             {-0.132, -0.172}, {0.612, -0.172}, {0.612, -0.403}, {1.068, -0.403}};
+    std::vector<geometry_msgs::Point> f(8);
+    for (int i = 0; i < 8; ++i)
+    {
+        f[i].x = xy[i][0];
+        f[i].y = xy[i][1];
+    }
+    return f;
+}
+
+TEST(FootprintChecker, NonConvexFootprintLeavesTheNotchFree)
+{
+    // an obstacle beside the fork (inside the convex hull of the footprint, outside the footprint)
+    Map notch;
+    notch.fill(0.20, 0.25, 0.40, 0.30, costmap_2d::LETHAL_OBSTACLE);
+    FootprintChecker checker(notch.costmap, sdFootprint());
+    EXPECT_EQ(checker.checkPose({0, 0, 0}), Collision::NONE);
+    EXPECT_EQ(checker.checkPose({0, 0.15, 0}), Collision::LETHAL); // 15 cm to the left the fork is on it
+
+    // one under the fork or the body is a collision
+    Map fork;
+    fork.fill(0.20, 0.0, 0.25, 0.05, costmap_2d::LETHAL_OBSTACLE);
+    EXPECT_EQ(FootprintChecker(fork.costmap, sdFootprint()).checkPose({0, 0, 0}), Collision::LETHAL);
+    Map body;
+    body.fill(0.95, 0.35, 1.0, 0.38, costmap_2d::LETHAL_OBSTACLE);
+    EXPECT_EQ(FootprintChecker(body.costmap, sdFootprint()).checkPose({0, 0, 0}), Collision::LETHAL);
+}
+
+TEST(FootprintChecker, TurnsAboutTheOriginNotTheBodyCentre)
+{
+    // a crate 1 m to the right of the SD's turning centre: turning counterclockwise swings the body away
+    // from it, turning clockwise onto it
+    Map map;
+    map.fill(0.0, -1.1, 0.5, -0.95, costmap_2d::LETHAL_OBSTACLE);
+    FootprintChecker checker(map.costmap, sdFootprint());
+    EXPECT_TRUE(checker.checkRotation({0, 0, 0}, M_PI / 2).free());
+    const CheckResult cw = checker.checkRotation({0, 0, 0}, -M_PI / 2);
+    EXPECT_EQ(cw.collision, Collision::LETHAL);
+    EXPECT_GT(std::fabs(cw.angle), 0.5);
+    EXPECT_NEAR(checker.circumscribedRadius(), std::hypot(1.068, 0.403), 1e-9);
+}
+
 TEST(StoppingDistance, UsesTheFasterOfMeasuredAndCommanded)
 {
     // measured 1.0 m/s while the new command is 0.2 m/s: the base still has to stop from 1.0 m/s

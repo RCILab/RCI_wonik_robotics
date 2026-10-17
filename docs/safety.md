@@ -13,7 +13,7 @@ sensor specifications; nothing here is a confirmed hardware limit.
 | `robot_localization` `ekf_odom` | wheel odometry + IMU yaw rate | (see [Odometry](#odometry)) |
 | `stop_go_local_planner`, `pure_pursuit_local_planner` | odometry age; swept footprint of the commanded motion on the local costmap | controller fails / stop and wait |
 | `move_base_flex` local costmap | every observation source within `expected_update_rate` | zero velocity instead of the controller's output |
-| `obstacle_detector` + `cmd_vel_gate` | sensor validity; protective field in the direction of travel; turn radius | zero command |
+| `obstacle_detector` + `cmd_vel_gate` | sensor validity; protective field in the direction of travel and of a turn in place | zero command |
 | `route_supervisor` | detour planning and execution | holds the robot or keeps it on the route behind the gate |
 
 The higher layers only stop what they command. None of them can stop the wheels if the drive unit driver
@@ -21,7 +21,7 @@ keeps executing an old command, so the driver's watchdog is required, not option
 
 ## qd_kinematics
 
-Parameters in `wonik_cobot_v2_bringup/config/kinematics.yaml`.
+Parameters in `wonik_cobot_bringup/config/<robot>/kinematics.yaml`.
 
 - `cmd_vel` older than `cmd_timeout_sec` (0.5 s): zero command, the base brakes at `linear_dec`. A
   non-finite `cmd_vel` is taken as a zero command. Teleop must repeat its command
@@ -96,18 +96,24 @@ Shared code in `local_planner_checks` (the same functions in both planners and i
   make up for another failing. A sensor in `optional_topics` keeps its last obstacles while stale.
 - Switched off on purpose: `navigation.launch depth_camera:=false` removes the depth camera from the
   required sensors and the costmaps. With `depth_camera:=true` a silent camera stops the robot.
-- Protective field: the detector reports how far the body (grown by `side_margin`) can move in 8
-  directions before touching an obstacle. The gate stops a translation when the distance in the
+- Protective field: the detector reports how far the body's bounding box (grown by `side_margin`) can
+  move in 8 directions before touching an obstacle, and how far the footprint polygon
+  (`config/<robot>/footprint.yaml`, the same as the costmaps') can turn in place each way before it
+  touches one. The robot turns about `base_footprint`, and the body need not be centred on it (SD: the
+  fork roller axle, with the body ahead). The gate stops a translation when the distance in the
   direction(s) it moves is below the stopping distance at the current speed (gate `dec`, `latency`,
-  `margin`). Turning in place stops for obstacle points within `turn_radius` of the centre.
+  `margin`), and a turn in place when the clearance in its direction is below the stopping angle at the
+  current yaw rate (`dec_theta`, `latency`, `margin_theta`).
 - The supervisor state counts only while current (published at 10 Hz, `state_timeout` 0.5 s). Only a
   confirmed detour (AVOID) delegates the obstacle stops to the avoid controller; sensor validity is
   always checked.
 - Every 50 ms the gate judges the command in force again (the last `cmd_vel_raw`, none once it is older
   than `raw_timeout`) and sends a stop at once when the result is more restrictive than what it sent last.
 - Sensor coverage: the LiDAR sees 360° but not low objects close to the robot; the depth camera only
-  looks forward. Turning-radius and side checks depend on the LiDAR (the simulated HDL-32E has a 0.3 m
-  minimum range, the Mid-360 0.1 m).
+  looks forward. Turn and side checks depend on the LiDAR (the simulated HDL-32E has a 0.3 m minimum
+  range, the Mid-360 0.1 m). On the SD the LiDAR sits on top of the 1.7 m column, so low obstacles beside
+  the robot are not seen at all (the floor is reached only ~2.9 m out with the HDL-32E's -30.7 deg,
+  ~14 m out with the Mid-360's -7 deg).
 
 ## Route supervisor
 

@@ -9,7 +9,8 @@
                                                  ~clear_fault
   h   bad joint_states injected while driving -> NaN, future, late (50 ms, 2 s), duplicate stamps and
                                                  missing joints rejected; odometry and commands unaffected
-  d   box beside the robot, turn in place through the gate -> turn stopped, driving along it allowed
+  d   box beside the robot, turn in place through the gate -> turn stopped (the footprint would touch the
+                                                 box within the protective angle), driving along it allowed
   g   low box only the depth camera sees, then the camera stream is lost (relay killed) -> stays stopped
 Each case prints its measurements and PASS/FAIL. The depth camera needs an X display (Xvfb works).
 """
@@ -26,12 +27,12 @@ from gazebo_msgs.srv import DeleteModel, SpawnModel
 from geometry_msgs.msg import Pose, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Bool, Float64MultiArray, String
+from std_msgs.msg import Bool, Float32MultiArray, Float64MultiArray, String
 from std_srvs.srv import Trigger
 from tf.transformations import euler_from_quaternion
 
 S = {"gt": None, "speed": 0.0, "mode": "", "fault": "", "wheel": None, "odom": None, "js": None, "reason": "",
-     "sensors_ok": None, "detected": None, "near": None, "drive_cmd": [], "bad": []}
+     "sensors_ok": None, "detected": None, "turn": None, "drive_cmd": [], "bad": []}
 lock = threading.Lock()
 
 
@@ -77,7 +78,7 @@ rospy.Subscriber("/drive_controller/command", Float64MultiArray, on_drive_cmd)
 rospy.Subscriber("/cmd_vel_gate/reason", String, lambda m: S.__setitem__("reason", m.data))
 rospy.Subscriber("/obstacle_detector/sensors_ok", Bool, lambda m: S.__setitem__("sensors_ok", m.data))
 rospy.Subscriber("/obstacle_detected", Bool, lambda m: S.__setitem__("detected", m.data))
-rospy.Subscriber("/obstacle_near", Bool, lambda m: S.__setitem__("near", m.data))
+rospy.Subscriber("/obstacle_turn_clearance", Float32MultiArray, lambda m: S.__setitem__("turn", list(m.data)))
 cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 raw_pub = rospy.Publisher("/cmd_vel_raw", Twist, queue_size=1)
 switch = rospy.ServiceProxy("/controller_manager/switch_controller", SwitchController)
@@ -240,14 +241,14 @@ def delete(name):
 
 def case_d():
     x, y, yaw = S["gt"]
-    # box along the left side, 0.15 m from the body (inside the 0.57 m corner circle)
+    # box along the left side, 0.15 m from the body (the corners reach it turning either way)
     spawn("side_box", x - 0.70 * math.sin(yaw), y + 0.70 * math.cos(yaw), 2.0, 0.4, 1.0, yaw)
     rospy.sleep(2.0)
     y0 = S["gt"][2]
     reasons = []
     drive(twist(wz=0.4), 6.0, pub=raw_pub, watch=lambda t: reasons.append(S["reason"]) if S["reason"] not in reasons else None)
     turned_blocked = math.degrees(abs(math.remainder(S["gt"][2] - y0, 2 * math.pi)))
-    near = S["near"]
+    turn = S["turn"]
     p0 = S["gt"]
     drive(twist(0.3), 6.0, pub=raw_pub)  # includes re-aligning the wheels if they point elsewhere
     along = math.hypot(S["gt"][0] - p0[0], S["gt"][1] - p0[1])
@@ -258,9 +259,11 @@ def case_d():
     drive(twist(wz=0.4), 8.0, pub=raw_pub)
     turned_free = math.degrees(abs(math.remainder(S["gt"][2] - y1, 2 * math.pi)))
     drive(twist(), 1.0, pub=raw_pub)
-    print("box beside: obstacle_near %s, gate %s, turned %.1f deg; drove along it %.2f m; box removed: turned %.1f deg"
-          % (near, [r for r in reasons if r], turned_blocked, along, turned_free))
-    result(near and turned_blocked < 1.0 and along > 0.3 and turned_free > 30.0,
+    print("box beside: turn clearance %s deg, gate %s, turned %.1f deg; drove along it %.2f m; box removed: "
+          "turned %.1f deg" % (["%.0f" % math.degrees(a) for a in turn] if turn else None,
+                               [r for r in reasons if r], turned_blocked, along, turned_free))
+    result(turn is not None and turn[0] < math.radians(30.0) and turned_blocked < 1.0 and along > 0.3 and
+           turned_free > 30.0,
            "turning in place stopped next to the box, driving along it and turning without it allowed")
 
 
