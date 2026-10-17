@@ -1,6 +1,7 @@
 #include "qd_kinematics/steer_drive_controller.hpp"
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 
 namespace qd_kinematics
@@ -73,6 +74,8 @@ const char *SteerDriveController::modeName(Mode mode)
         return "STEER_ALIGN";
     case Mode::CREEP:
         return "CREEP";
+    case Mode::FAULT:
+        return "FAULT";
     }
     return "UNKNOWN";
 }
@@ -86,21 +89,96 @@ SteerDriveController::SteerDriveController(std::shared_ptr<const KinematicsModel
         throw std::invalid_argument("SteerDriveController needs a model with at least one module");
     }
     reset();
+    verify_start_ = false; // a fresh controller starts as before; the DRIVE tracking check applies
 }
 
 void SteerDriveController::reset()
 {
     const std::size_t n = model_->numModules();
-    mode_ = Mode::DRIVE;
+    mode_ = (mode_ == Mode::FAULT) ? Mode::FAULT : Mode::DRIVE;
     initialized_ = false;
     v_meas_filt_.assign(n, 0.0);
     v_cmd_state_.assign(n, 0.0);
     th_cmd_state_.assign(n, 0.0);
     th_target_prev_.assign(n, 0.0);
     balance_corr_state_.assign(n, 0.0);
+    track_time_.assign(n, 0.0);
     stop_time_ = 0.0;
     align_time_ = 0.0;
     sync_time_ = 0.0;
+    phase_time_ = 0.0;
+    phase_deadline_ = 0.0;
+    verify_start_ = true;
+}
+
+void SteerDriveController::clearFault()
+{
+    if (mode_ != Mode::FAULT)
+    {
+        return;
+    }
+    fault_reason_.clear();
+    start_attempts_ = 0;
+    std::fill(track_time_.begin(), track_time_.end(), 0.0);
+    setMode(Mode::DRIVE);
+    verify_start_ = true;
+}
+
+void SteerDriveController::setMode(Mode mode)
+{
+    mode_ = mode;
+    phase_time_ = 0.0;
+    align_time_ = 0.0;
+    sync_time_ = 0.0;
+    phase_deadline_ = 0.0;
+    switch (mode)
+    {
+    case Mode::WAIT_STOP:
+        if (p_.wait_stop_timeout > 0.0)
+        {
+            double v_max = 0.0;
+            for (double v : v_cmd_state_)
+            {
+                v_max = std::max(v_max, std::abs(v));
+            }
+            phase_deadline_ = v_max / std::max(p_.linear_dec, 1e-3) + p_.stop_hold_sec + p_.wait_stop_timeout;
+        }
+        break;
+    case Mode::STEER_ALIGN:
+        phase_deadline_ = std::max(p_.align_timeout, 0.0);
+        break;
+    case Mode::CREEP:
+        phase_deadline_ = std::max(p_.creep_timeout, 0.0);
+        break;
+    default:
+        break;
+    }
+}
+
+void SteerDriveController::enterFault(const std::string &reason)
+{
+    if (mode_ == Mode::FAULT)
+    {
+        return;
+    }
+    fault_reason_ = reason;
+    setMode(Mode::FAULT);
+}
+
+void SteerDriveController::startAttemptFailed(const std::string &what)
+{
+    ++start_attempts_;
+    const int max_attempts = std::max(p_.max_start_attempts, 1);
+    if (start_attempts_ >= max_attempts)
+    {
+        std::ostringstream s;
+        s << what << " (start attempt " << start_attempts_ << " of " << max_attempts << ")";
+        enterFault(s.str());
+    }
+    else
+    {
+        setMode(Mode::WAIT_STOP); // try again: stop, align, creep
+    }
 }
 
 double SteerDriveController::foldTarget(std::size_t i, double raw_angle, double &speed) const
@@ -161,6 +239,25 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
     }
     dt = std::clamp(dt, 1e-4, 0.1);
 
+    // Invalid input: a non-finite command means stop; a non-finite measurement cannot be used at all,
+    // so the wheels are commanded to zero and the steer commands are held.
+    const bool cmd_finite = std::isfinite(cmd.vx) && std::isfinite(cmd.vy) && std::isfinite(cmd.wz);
+    const Twist2D safe_cmd = cmd_finite ? cmd : Twist2D{};
+    for (const auto &m : measured)
+    {
+        if (!std::isfinite(m.angle) || !std::isfinite(m.speed))
+        {
+            command.resize(n);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                command[i].angle = initialized_ ? th_cmd_state_[i] : 0.0;
+                command[i].speed = 0.0;
+                v_cmd_state_[i] = 0.0;
+            }
+            return;
+        }
+    }
+
     if (!initialized_)
     {
         for (std::size_t i = 0; i < n; ++i)
@@ -173,7 +270,7 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
 
     // ---- Geometric targets ----
     std::vector<Vec2> wheel_vel;
-    model_->moduleVelocities(cmd, wheel_vel);
+    model_->moduleVelocities(safe_cmd, wheel_vel);
 
     bool all_zero = true;
     for (const auto &v : wheel_vel)
@@ -229,71 +326,102 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
 
     const double creep_scale = (max_target > p_.creep_speed_max) ? (p_.creep_speed_max / max_target) : 1.0;
 
-    // In CREEP, sync is checked against the creep-limited reference, not the full target.
-    bool meas_sync_ok = true;
-    bool cmd_sync_ok = true;
+    // In CREEP, sync is checked against the creep-limited reference, not the full target. Only the
+    // measured wheel speeds count: a converged command says nothing about whether the wheels turn.
+    bool speed_sync_ok = true;
     for (std::size_t i = 0; i < n; ++i)
     {
         const double ref = (mode_ == Mode::CREEP) ? v_target[i] * creep_scale : v_target[i];
         const double denom = std::max(std::abs(ref), p_.speed_sync_floor);
-
         const double meas_err = std::abs(v_meas_filt_[i] - ref);
-        meas_sync_ok = meas_sync_ok && (meas_err < p_.speed_sync_abs_tol) && (meas_err / denom < p_.speed_sync_rel_tol);
-
-        // Fallback: if the command has converged, release CREEP even when measured velocity
-        // lags because of stiction/simulation artifacts.
-        const double cmd_err = std::abs(v_cmd_state_[i] - ref);
-        cmd_sync_ok = cmd_sync_ok && (cmd_err < p_.speed_sync_abs_tol) && (cmd_err / denom < p_.speed_sync_rel_tol);
+        speed_sync_ok = speed_sync_ok && (meas_err < p_.speed_sync_abs_tol) && (meas_err / denom < p_.speed_sync_rel_tol);
     }
-    const bool speed_sync_ok = meas_sync_ok || cmd_sync_ok;
+
+    // ---- Drive response in DRIVE: every wheel must follow its last command ----
+    if (mode_ == Mode::DRIVE)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            const double err = std::abs(v_meas_filt_[i] - v_cmd_state_[i]);
+            const double tol = std::max(p_.drive_track_abs_tol, p_.drive_track_rel_tol * std::abs(v_cmd_state_[i]));
+            track_time_[i] = (err > tol) ? track_time_[i] + dt : 0.0;
+            if (p_.drive_fault_time > 0.0 && track_time_[i] >= p_.drive_fault_time - kTimeEps)
+            {
+                std::ostringstream s;
+                s << "wheel " << i << " does not follow its command (measured " << v_meas_filt_[i]
+                  << " m/s, commanded " << v_cmd_state_[i] << " m/s for " << track_time_[i] << " s)";
+                enterFault(s.str());
+                break;
+            }
+        }
+    }
+    else
+    {
+        std::fill(track_time_.begin(), track_time_.end(), 0.0);
+    }
 
     // ---- Mode transitions ----
-    if (near_zero_cmd)
+    phase_time_ += dt;
+    const bool phase_timed_out = phase_deadline_ > 0.0 && phase_time_ >= phase_deadline_ - kTimeEps;
+    if (near_zero_cmd && mode_ != Mode::FAULT && mode_ != Mode::DRIVE)
     {
-        mode_ = Mode::DRIVE;
-        align_time_ = 0.0;
-        sync_time_ = 0.0;
+        setMode(Mode::DRIVE);
     }
 
     switch (mode_)
     {
     case Mode::DRIVE:
-        if (is_misaligned)
+        if (is_misaligned || (verify_start_ && !near_zero_cmd))
         {
-            mode_ = Mode::WAIT_STOP;
-            align_time_ = 0.0;
-            sync_time_ = 0.0;
+            setMode(Mode::WAIT_STOP);
         }
         break;
     case Mode::WAIT_STOP:
         if (drive_stopped)
         {
-            mode_ = Mode::STEER_ALIGN;
-            align_time_ = 0.0;
-            sync_time_ = 0.0;
+            setMode(Mode::STEER_ALIGN);
+        }
+        else if (phase_timed_out)
+        {
+            std::ostringstream s;
+            s << "wheels did not stop within " << phase_time_ << " s";
+            enterFault(s.str());
         }
         break;
     case Mode::STEER_ALIGN:
         align_time_ = align_ok ? align_time_ + dt : 0.0;
         if (align_time_ >= p_.align_hold_sec - kTimeEps)
         {
-            mode_ = Mode::CREEP;
-            sync_time_ = 0.0;
+            setMode(Mode::CREEP);
+        }
+        else if (phase_timed_out)
+        {
+            std::ostringstream s;
+            s << "steering did not align within " << phase_time_ << " s";
+            startAttemptFailed(s.str());
         }
         break;
     case Mode::CREEP:
         if (is_misaligned)
         {
-            mode_ = Mode::WAIT_STOP;
-            align_time_ = 0.0;
-            sync_time_ = 0.0;
+            setMode(Mode::WAIT_STOP);
             break;
         }
         sync_time_ = (align_ok && speed_sync_ok) ? sync_time_ + dt : 0.0;
         if (sync_time_ >= p_.sync_hold_sec - kTimeEps)
         {
-            mode_ = Mode::DRIVE;
+            setMode(Mode::DRIVE);
+            start_attempts_ = 0;
+            verify_start_ = false;
         }
+        else if (phase_timed_out)
+        {
+            std::ostringstream s;
+            s << "measured wheel speeds did not follow the creep command within " << phase_time_ << " s";
+            startAttemptFailed(s.str());
+        }
+        break;
+    case Mode::FAULT:
         break;
     }
 
@@ -320,6 +448,10 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
             final_th[i] = th_target[i];
             final_v[i] = v_target[i] * creep_scale;
             break;
+        case Mode::FAULT:
+            final_th[i] = measured[i].angle;
+            final_v[i] = 0.0;
+            break;
         }
     }
 
@@ -339,7 +471,7 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
         }
         const bool similar_target = (v_max - v_min) < p_.drive_balance_target_gap;
         const bool enough_speed = max_target >= p_.drive_balance_min_speed;
-        const bool low_yaw_rate = std::abs(cmd.wz) < p_.drive_balance_wz_gate;
+        const bool low_yaw_rate = std::abs(safe_cmd.wz) < p_.drive_balance_wz_gate;
         balance_active = same_direction && similar_target && enough_speed && low_yaw_rate;
     }
 
@@ -400,6 +532,9 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
     debug_.stop_time = stop_time_;
     debug_.align_time = align_time_;
     debug_.sync_time = sync_time_;
+    debug_.phase_time = phase_time_;
+    debug_.start_attempts = start_attempts_;
+    debug_.verify_start = verify_start_;
     debug_.dir_err = dir_err;
     debug_.th_target = th_target;
     debug_.v_target = v_target;

@@ -1,0 +1,4 @@
+<library path="local_planner_checks">
+<class name="local_planner_checks/SettledGoalChecker" type="local_planner_checks::SettledGoalChecker" base_class_type="nav2_core::GoalChecker"/>
+<class name="local_planner_checks/RouteProgressChecker" type="local_planner_checks::RouteProgressChecker" base_class_type="nav2_core::ProgressChecker"/>
+</library>

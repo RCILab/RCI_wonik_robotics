@@ -1,7 +1,5 @@
-<library path="lib/libpure_pursuit_local_planner">
-  <class name="pure_pursuit_local_planner/PurePursuitLocalPlanner" type="pure_pursuit_local_planner::PurePursuitLocalPlanner" base_class_type="nav_core::BaseLocalPlanner">
-    <description>
-      Pure pursuit follower for curved paths (e.g. detours from a global planner): rotates in place only at the start, slows in curves, stops for obstacles on the path ahead.
-    </description>
+<library path="pure_pursuit_local_planner">
+  <class name="pure_pursuit_local_planner/PurePursuitLocalPlanner" type="pure_pursuit_local_planner::PurePursuitLocalPlanner" base_class_type="nav2_core::Controller">
+    <description>Humble controller retaining the reviewed Wonik route-following algorithm.</description>
   </class>
 </library>

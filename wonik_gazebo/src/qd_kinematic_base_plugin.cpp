@@ -1,7 +1,7 @@
 // Gazebo-only stand-in for the wheel-ground contact of a steer-drive base.
 // Every step the base link gets the planar twist that the measured module states (steer angle,
 // wheel speed) imply, computed with qd_kinematics' own forward kinematics. The steer and drive
-// joints are still commanded through gazebo_ros_control, so joint_states and the qd_kinematics node
+// joints are still commanded through ros2_control, so joint_states and the qd_kinematics node
 // behave as on the real robot; only the tyre physics (slip, load distribution) is replaced.
 #include <cmath>
 #include <memory>

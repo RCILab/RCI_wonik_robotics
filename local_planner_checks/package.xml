@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>local_planner_checks</name><version>0.3.0</version>
+  <description>Wonik QD robot: ROS 2 Humble local planner checks.</description>
+  <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>angles</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>nav2_core</depend>
+  <depend>pluginlib</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

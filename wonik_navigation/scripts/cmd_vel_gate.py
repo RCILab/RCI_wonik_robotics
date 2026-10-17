@@ -1,86 +1,122 @@
 #!/usr/bin/env python3
-"""cmd_vel gate between move_base_flex and the base: passes cmd_vel_raw to cmd_vel, but stops any
-translation while an obstacle is detected, unless the robot is on a planned detour. Turning in place
-still passes: the detection box looks ahead, and a robot that stops facing a wall at a waypoint must
-be able to turn away from it.
+"""cmd_vel gate between move_base_flex and the base: passes cmd_vel_raw to cmd_vel according to
+wonik_navigation.safety.gate_command:
 
-"On a detour" is the route supervisor's AVOID state. Without a supervisor the zone decides instead:
-the gate is open in zones whose type is not in ~stop_zone_types.
+  - stops everything while the obstacle detector is silent or a required sensor is stale (every state)
+  - passes everything while the route supervisor reports a running detour (AVOID): the avoid
+    controller checks its own motion against the costmap
+  - otherwise stops translation for an obstacle in the front box, and turning in place for an
+    obstacle within the turn radius
+
+The supervisor state counts only while it is current: the supervisor publishes it at 10 Hz, and a state
+older than ~state_timeout (supervisor dead or stuck) is treated as "no detour". Without a supervisor the
+gate always applies the obstacle stops.
+
+Every 50 ms the command in force (the last cmd_vel_raw, or none once it is older than ~raw_timeout) is
+judged again with the current inputs; when the result is more restrictive than what was last sent
+(e.g. an obstacle came within the turn radius during a turn, a sensor failed, or move_base_flex went
+silent), it is sent at once instead of waiting for the next raw command or the base's own timeout.
 
 Parameters
-  ~stop_zone_types  zone types in which obstacles stop the robot when no supervisor state is known
-                    (default [stop, none]: everywhere except avoid zones)
-  ~timeout          [s] without /obstacle_detected for this long, the gate closes (fail-safe)
+  ~timeout        [s] detector messages older than this: detector silent (default 0.5)
+  ~state_timeout  [s] supervisor state older than this is ignored (default 0.5)
+  ~raw_timeout    [s] a cmd_vel_raw older than this is no longer in force: zero is sent (default 0.5)
 Topics
-  cmd_vel_raw (in), obstacle_detected (in), current_zone (in), route_supervisor/state (in), cmd_vel (out)
-  ~blocked    (std_msgs/Bool, out, latched) gate state
+  cmd_vel_raw (in), obstacle_detected, obstacle_near, obstacle_detector/sensors_ok (in),
+  route_supervisor/state (in), cmd_vel (out)
+  ~blocked    (std_msgs/Bool, out, latched) translation would be stopped now
+  ~reason     (std_msgs/String, out, latched) why (empty when it would pass)
 """
-import rospy
+import threading
+
+import rclpy
+from rclpy.time import Time
+from rclpy.qos import qos_profile_sensor_data
+from wonik_navigation.ros_node import ManagedNode, latched_qos, spin_node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Bool, String
 
+from wonik_navigation.safety import gate_command
 
-class CmdVelGate:
+
+class CmdVelGate(ManagedNode):
     def __init__(self):
-        self.stop_types = set(rospy.get_param("~stop_zone_types", ["stop", "none"]))
-        self.timeout = rospy.get_param("~timeout", 0.5)
-        self.obstacle = True
-        self.obstacle_stamp = None
-        self.zone = "none"
-        self.supervisor_state = None
-        self.blocked = None
-        self.pub = rospy.Publisher("cmd_vel", Twist, queue_size=1)
-        self.blocked_pub = rospy.Publisher("~blocked", Bool, queue_size=1, latch=True)
-        rospy.Subscriber("obstacle_detected", Bool, self.on_obstacle, queue_size=1)
-        rospy.Subscriber("current_zone", String, self.on_zone, queue_size=1)
-        rospy.Subscriber("route_supervisor/state", String, self.on_state, queue_size=1)
-        rospy.Subscriber("cmd_vel_raw", Twist, self.on_cmd, queue_size=1)
-        rospy.Timer(rospy.Duration(0.05), lambda _: self.update())
+        super().__init__("cmd_vel_gate")
+        self.timeout = self.param("~/timeout", 0.5)
+        self.state_timeout = self.param("~/state_timeout", 0.5)
+        self.raw_timeout = self.param("~/raw_timeout", 0.5)
+        self.inputs = {}  # name -> (value, receive time)
+        self.reason = ""
+        self.lock = threading.Lock()
+        self.raw = None             # (vx, vy, wz), receive time of the last cmd_vel_raw
+        self.out = (0.0, 0.0, 0.0)  # last command sent
+        self.pub = self.create_publisher(Twist, "cmd_vel", 1)
+        self.blocked_pub = self.create_publisher(Bool, "~/blocked", latched_qos())
+        self.reason_pub = self.create_publisher(String, "~/reason", latched_qos())
+        for name, topic, kind in (("detected", "obstacle_detected", Bool), ("near", "obstacle_near", Bool),
+                                  ("sensors_ok", "obstacle_detector/sensors_ok", Bool),
+                                  ("state", "route_supervisor/state", String)):
+            self.create_subscription(kind, topic, lambda msg, key=name: self.on_input(msg, key), 1)
+        self.create_subscription(Twist, "cmd_vel_raw", self.on_cmd, 1)
+        self.create_timer(0.05, self.check)
 
-    def on_obstacle(self, msg):
-        self.obstacle, self.obstacle_stamp = msg.data, rospy.get_time()
-        self.update()
+    def on_input(self, msg, name):
+        self.inputs[name] = (msg.data, self.seconds())
 
-    def on_zone(self, msg):
-        self.zone = msg.data
-        self.update()
+    def current(self, name, timeout):
+        """Value of an input if received within timeout, else None."""
+        entry = self.inputs.get(name)
+        if entry is None:
+            return None
+        age = self.seconds() - entry[1]
+        return entry[0] if 0 <= age <= timeout else None
 
-    def on_state(self, msg):
-        self.supervisor_state = msg.data
-        self.update()
+    def decide(self, cmd):
+        detected = self.current("detected", self.timeout)
+        near = self.current("near", self.timeout)
+        sensors_ok = self.current("sensors_ok", self.timeout)
+        fresh = detected is not None and near is not None and sensors_ok is not None
+        avoid_active = self.current("state", self.state_timeout) == "AVOID"
+        return gate_command(cmd, fresh, bool(sensors_ok), bool(detected), bool(near), avoid_active)
 
-    def stops_for_obstacles(self):
-        if self.supervisor_state is not None:
-            return self.supervisor_state != "AVOID"
-        return self.zone in self.stop_types
+    def report(self, reason):
+        reason = reason or ""
+        if reason != self.reason:
+            self.reason = reason
+            self.blocked_pub.publish(Bool(data=bool(reason)))
+            self.reason_pub.publish(String(data=reason))
+            state = self.current("state", self.state_timeout)
+            self.info("cmd_vel_gate: %s (supervisor %s)", ("STOP, " + reason) if reason else "pass", state)
 
-    def is_blocked(self):
-        if not self.stops_for_obstacles():
-            return False
-        stale = self.obstacle_stamp is None or rospy.get_time() - self.obstacle_stamp > self.timeout
-        return self.obstacle or stale
+    def send(self, out):
+        msg = Twist()
+        msg.linear.x, msg.linear.y, msg.angular.z = out
+        self.pub.publish(msg)
+        self.out = out
 
-    def update(self):
-        blocked = self.is_blocked()
-        if blocked != self.blocked:
-            self.blocked = blocked
-            self.blocked_pub.publish(Bool(data=blocked))
-            rospy.loginfo("cmd_vel_gate: %s (zone %s, supervisor %s)", "STOP, obstacle ahead" if blocked else "pass",
-                          self.zone, self.supervisor_state)
-            if blocked:
-                self.pub.publish(Twist())
+    def check(self):
+        """Periodic: report whether translation would pass, and judge the command in force again."""
+        _, reason = self.decide((1.0, 0.0, 0.0))
+        self.report(reason)
+        with self.lock:
+            if self.raw is None or not 0 <= self.seconds() - self.raw[1] <= self.raw_timeout:
+                out, why = (0.0, 0.0, 0.0), "no current cmd_vel_raw"
+            else:
+                out, why = self.decide(self.raw[0])
+            # stops go out at once; moving (again) waits for the next raw command
+            if out != self.out and all(abs(o) <= abs(last) + 1e-9 for o, last in zip(out, self.out)):
+                self.info_throttle(2.0, "cmd_vel_gate: command in force stopped, %s", why)
+                self.send(out)
 
     def on_cmd(self, msg):
-        if not self.is_blocked():
-            self.pub.publish(msg)
-            return
-        out = Twist()
-        if abs(msg.linear.x) < 0.01 and abs(msg.linear.y) < 0.01:
-            out.angular.z = msg.angular.z  # turning in place
-        self.pub.publish(out)
+        cmd = (msg.linear.x, msg.linear.y, msg.angular.z)
+        out, reason = self.decide(cmd)
+        with self.lock:
+            self.raw = (cmd, self.seconds())
+            self.send(out)
+        if reason and reason != self.reason:
+            self.info_throttle(2.0, "cmd_vel_gate: command stopped, %s", reason)
 
 
 if __name__ == "__main__":
-    rospy.init_node("cmd_vel_gate")
-    CmdVelGate()
-    rospy.spin()
+    spin_node(CmdVelGate)

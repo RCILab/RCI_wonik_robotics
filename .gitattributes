@@ -1,6 +1,5 @@
-# Shell scripts must keep LF endings, also in Windows checkouts used from WSL.
-*.sh text eol=lf
+* text=auto eol=lf
 *.stl binary
+*.pgm binary
 *.gif binary
 *.png binary
-*.pgm binary

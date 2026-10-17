@@ -1,51 +1,31 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.16)
 project(qd_kinematics)
-
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Wpedantic)
-
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  geometry_msgs
-  nav_msgs
-  sensor_msgs
-  std_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-)
-
-catkin_package(
-  INCLUDE_DIRS include
-  LIBRARIES ${PROJECT_NAME}_core
-  CATKIN_DEPENDS roscpp geometry_msgs nav_msgs sensor_msgs std_msgs tf2 tf2_ros tf2_geometry_msgs
-)
-
-include_directories(include ${catkin_INCLUDE_DIRS})
-
-# ROS-independent kinematics core (identical to the ROS 2 version).
-add_library(${PROJECT_NAME}_core
-  src/kinematics_model.cpp
-  src/steer_drive_controller.cpp
-  src/odometry_integrator.cpp
-)
-
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+add_library(qd_kinematics_core SHARED src/kinematics_model.cpp src/steer_drive_controller.cpp src/odometry_integrator.cpp src/stamp_monitor.cpp)
+target_include_directories(qd_kinematics_core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 add_executable(kinematics_node src/kinematics_node.cpp)
-target_link_libraries(kinematics_node ${PROJECT_NAME}_core ${catkin_LIBRARIES})
-add_dependencies(kinematics_node ${catkin_EXPORTED_TARGETS})
-
-install(TARGETS ${PROJECT_NAME}_core kinematics_node
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-install(DIRECTORY include/${PROJECT_NAME}/
-  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
-)
-
-if(CATKIN_ENABLE_TESTING)
-  catkin_add_gtest(test_kinematics_core test/test_kinematics_core.cpp)
-  # The test file is shared with the ROS 2 package, where ament links gtest_main.
-  target_link_libraries(test_kinematics_core ${PROJECT_NAME}_core ${GTEST_MAIN_LIBRARIES})
+target_link_libraries(kinematics_node qd_kinematics_core)
+ament_target_dependencies(kinematics_node rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs std_srvs tf2 tf2_ros tf2_geometry_msgs)
+install(TARGETS qd_kinematics_core EXPORT export_qd_kinematics_core ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+install(TARGETS kinematics_node DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY include/ DESTINATION include)
+ament_export_targets(export_qd_kinematics_core HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_kinematics_core test/test_kinematics_core.cpp)
+  target_link_libraries(test_kinematics_core qd_kinematics_core)
 endif()
+ament_package()

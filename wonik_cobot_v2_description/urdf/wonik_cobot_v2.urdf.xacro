@@ -11,7 +11,6 @@
   <!-- Gazebo depth camera sensor; it needs an X display (rendering) to produce images -->
   <xacro:arg name="depth_camera" default="true"/>
 
-  <xacro:include filename="$(find velodyne_description)/urdf/HDL-32E.urdf.xacro"/>
   <xacro:include filename="$(find wonik_cobot_v2_description)/urdf/wonik_cobot_v2.gazebo.xacro"/>
 
   <xacro:property name="g" value="${xacro.load_yaml('$(arg geometry)')}"/>
@@ -96,24 +95,7 @@
       </collision>
     </link>
 
-    <transmission name="${name}_steer_trans">
-      <type>transmission_interface/SimpleTransmission</type>
-      <joint name="${name}_steer_joint">
-        <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
-      </joint>
-      <actuator name="${name}_steer_motor">
-        <mechanicalReduction>1</mechanicalReduction>
-      </actuator>
-    </transmission>
-    <transmission name="${name}_drive_trans">
-      <type>transmission_interface/SimpleTransmission</type>
-      <joint name="${name}_drive_joint">
-        <hardwareInterface>hardware_interface/VelocityJointInterface</hardwareInterface>
-      </joint>
-      <actuator name="${name}_drive_motor">
-        <mechanicalReduction>1</mechanicalReduction>
-      </actuator>
-    </transmission>
+
   </xacro:macro>
 
   <!-- Passive omni wheel: sphere contact (its visual is part of base.stl). -->
@@ -151,11 +133,33 @@
   <xacro:qd_units/>
   <xacro:omni_wheels/>
 
-  <!-- 3D LiDAR (velodyne_simulator), stand-in for the Mid-360. Topic /points, frame velodyne. -->
+  <!-- 3D LiDAR (velodyne_simulator), stand-in for the Mid-360. Topic /points, frame velodyne.
+       min_range 0.3 m instead of the HDL-32E's 0.9 m, closer to the Mid-360 (0.1 m): obstacles right
+       beside the body must be visible (turn-in-place check); 0.3 m keeps most deck hits out. -->
   <xacro:property name="l" value="${g['lidar_xyz']}"/>
-  <xacro:HDL-32E parent="base_link" name="velodyne" topic="/points" hz="10" samples="625" gpu="$(arg lidar_gpu)">
-    <origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
-  </xacro:HDL-32E>
+  <link name="velodyne">
+    <inertial><mass value="0.8"/><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/></inertial>
+    <visual><geometry><cylinder radius="0.04" length="0.07"/></geometry></visual>
+  </link>
+  <joint name="velodyne_joint" type="fixed">
+    <parent link="base_link"/><child link="velodyne"/><origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
+  </joint>
+  <gazebo reference="velodyne">
+    <sensor name="lidar" type="${'gpu_ray' if '$(arg lidar_gpu)' == 'true' else 'ray'}">
+      <always_on>true</always_on><update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal><samples>625</samples><resolution>1</resolution><min_angle>-3.14159265</min_angle><max_angle>3.14159265</max_angle></horizontal>
+          <vertical><samples>32</samples><resolution>1</resolution><min_angle>-0.5353</min_angle><max_angle>0.1862</max_angle></vertical>
+        </scan>
+        <range><min>0.3</min><max>30.0</max><resolution>0.01</resolution></range>
+      </ray>
+      <plugin name="lidar_ros" filename="libgazebo_ros_ray_sensor.so">
+        <ros><remapping>~/out:=/points</remapping></ros>
+        <output_type>sensor_msgs/PointCloud2</output_type><frame_name>velodyne</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
 
   <!-- Front depth camera (RealSense D435). camera_depth_optical_frame: z forward, x right, y down. -->
   <xacro:property name="c" value="${g['depth_camera_xyz']}"/>
@@ -183,6 +187,42 @@
   </joint>
   <link name="camera_depth_optical_frame"/>
 
+  <!-- IMU: /imu/data in frame imu_link -->
+  <xacro:property name="i" value="${g['imu_xyz']}"/>
+  <xacro:property name="ir" value="${g['imu_rpy']}"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="${i[0]} ${i[1]} ${i[2]}" rpy="${ir[0]} ${ir[1]} ${ir[2]}"/>
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+
   <xacro:cobot_v2_gazebo sim_drive="$(arg sim_drive)" depth_camera="$(arg depth_camera)"/>
+
+  <xacro:arg name="hardware_plugin" default="gazebo_ros2_control/GazeboSystem"/>
+  <ros2_control name="WonikSystem" type="system">
+    <hardware><plugin>$(arg hardware_plugin)</plugin></hardware>
+    <xacro:macro name="control_modules" params="i:=0">
+      <xacro:if value="${i &lt; len(g['module_names'])}">
+        <joint name="${g['steer_joints'][i]}">
+          <command_interface name="position"/>
+          <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+          <state_interface name="velocity"/>
+        </joint>
+        <joint name="${g['drive_joints'][i]}">
+          <command_interface name="velocity"/>
+          <state_interface name="position"/><state_interface name="velocity"/>
+        </joint>
+        <xacro:control_modules i="${i+1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:control_modules/>
+  </ros2_control>
 
 </robot>

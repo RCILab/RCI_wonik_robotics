@@ -9,3 +9,9 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# ROS 2 workspace outputs
+build/
+install/
+log/
+.pytest_cache/

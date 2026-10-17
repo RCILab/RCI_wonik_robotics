@@ -1,0 +1,209 @@
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      global_frame: map
+      robot_base_frame: base_footprint
+      update_frequency: 2.0
+      publish_frequency: 1.0
+      transform_tolerance: 0.5
+      resolution: 0.05
+      plugins:
+      - static_layer
+      - obstacle_layer
+      - inflation_layer
+      static_layer:
+        map_topic: /map
+        subscribe_to_updates: false
+        plugin: nav2_costmap_2d::StaticLayer
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        observation_sources: scan depth
+        scan:
+          topic: /scan
+          data_type: LaserScan
+          sensor_frame: base_footprint
+          marking: true
+          clearing: true
+          inf_is_valid: true
+          expected_update_rate: 0.5
+          obstacle_max_range: 6.0
+          raytrace_max_range: 8.0
+        depth:
+          topic: /camera/depth/points
+          data_type: PointCloud2
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.06
+          max_obstacle_height: 1.8
+          expected_update_rate: 0.5
+          obstacle_max_range: 4.0
+          raytrace_max_range: 5.0
+        plugin: nav2_costmap_2d::ObstacleLayer
+      inflation_layer:
+        inflation_radius: 1.0
+        cost_scaling_factor: 3.0
+        plugin: nav2_costmap_2d::InflationLayer
+      footprint: '[[0.452, 0.352], [0.452, -0.352], [-0.452, -0.352], [-0.452, 0.352]]'
+      footprint_padding: 0.0
+      use_sim_time: true
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      global_frame: odom
+      robot_base_frame: base_footprint
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      transform_tolerance: 0.5
+      rolling_window: true
+      width: 8
+      height: 8
+      resolution: 0.05
+      track_unknown_space: true
+      plugins:
+      - obstacle_layer
+      - inflation_layer
+      obstacle_layer:
+        observation_sources: scan depth
+        scan:
+          topic: /scan
+          data_type: LaserScan
+          sensor_frame: base_footprint
+          marking: true
+          clearing: true
+          inf_is_valid: true
+          expected_update_rate: 0.5
+          obstacle_max_range: 6.0
+          raytrace_max_range: 8.0
+        depth:
+          topic: /camera/depth/points
+          data_type: PointCloud2
+          marking: true
+          clearing: true
+          min_obstacle_height: 0.06
+          max_obstacle_height: 1.8
+          expected_update_rate: 0.5
+          obstacle_max_range: 4.0
+          raytrace_max_range: 5.0
+        plugin: nav2_costmap_2d::ObstacleLayer
+      inflation_layer:
+        inflation_radius: 0.6
+        cost_scaling_factor: 5.0
+        plugin: nav2_costmap_2d::InflationLayer
+      footprint: '[[0.452, 0.352], [0.452, -0.352], [-0.452, -0.352], [-0.452, 0.352]]'
+      footprint_padding: 0.0
+      use_sim_time: true
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 5.0
+    odom_topic: odom
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins:
+    - route_goal
+    - avoid_goal
+    controller_plugins:
+    - stop_go
+    - stop_go_slow
+    - avoid
+    progress_checker:
+      plugin: local_planner_checks/RouteProgressChecker
+    route_goal:
+      plugin: local_planner_checks/SettledGoalChecker
+      xy_goal_tolerance: 0.03
+      yaw_goal_tolerance: 0.02
+      goal_tune_time: 0.3
+    avoid_goal:
+      plugin: local_planner_checks/SettledGoalChecker
+      xy_goal_tolerance: 0.1
+      yaw_goal_tolerance: 3.141592653589793
+      goal_tune_time: 0.3
+    stop_go:
+      max_vel_x: 1.0
+      min_trans_vel: 0.05
+      acc_lim_x: 0.3
+      dec_lim_x: 0.3
+      max_rot_vel: 0.6
+      min_rot_vel: 0.05
+      acc_lim_theta: 0.6
+      trans_acc_lim_theta: 0.4
+      low_pass_gain: 0.5
+      lookahead_dist: 0.8
+      start_yaw_error: 0.26
+      corner_angle: 0.17
+      xy_goal_tolerance: 0.03
+      yaw_goal_tolerance: 0.02
+      trans_stopped_vel: 0.02
+      rot_stopped_vel: 0.02
+      goal_tune_time: 0.3
+      odom_timeout: 0.5
+      collision_latency: 0.3
+      collision_margin: 0.1
+      rotation_margin: 0.1
+      holonomic: true
+      adjust_max_dist: 0.3
+      adjust_vel: 0.1
+      plugin: stop_go_local_planner/StopGoLocalPlanner
+    stop_go_slow:
+      max_vel_x: 0.3
+      min_trans_vel: 0.05
+      acc_lim_x: 0.3
+      dec_lim_x: 0.3
+      max_rot_vel: 0.3
+      min_rot_vel: 0.05
+      acc_lim_theta: 0.6
+      trans_acc_lim_theta: 0.4
+      low_pass_gain: 0.5
+      lookahead_dist: 0.8
+      start_yaw_error: 0.26
+      corner_angle: 0.17
+      xy_goal_tolerance: 0.03
+      yaw_goal_tolerance: 0.02
+      trans_stopped_vel: 0.02
+      rot_stopped_vel: 0.02
+      goal_tune_time: 0.3
+      odom_timeout: 0.5
+      collision_latency: 0.3
+      collision_margin: 0.1
+      rotation_margin: 0.1
+      holonomic: true
+      adjust_max_dist: 0.3
+      adjust_vel: 0.1
+      plugin: stop_go_local_planner/StopGoLocalPlanner
+    avoid:
+      max_vel_x: 0.5
+      min_trans_vel: 0.05
+      acc_lim_x: 0.3
+      dec_lim_x: 0.3
+      max_rot_vel: 0.6
+      min_rot_vel: 0.05
+      acc_lim_theta: 0.6
+      trans_acc_lim_theta: 0.4
+      low_pass_gain: 0.5
+      lookahead_dist: 1.0
+      lookahead_time: 0.5
+      start_yaw_error: 0.7
+      max_curve_vel: 0.3
+      min_stop_dist: 0.3
+      collision_latency: 0.3
+      rotation_margin: 0.1
+      odom_timeout: 0.5
+      xy_goal_tolerance: 0.1
+      trans_stopped_vel: 0.02
+      rot_stopped_vel: 0.02
+      goal_tune_time: 0.3
+      plugin: pure_pursuit_local_planner/PurePursuitLocalPlanner
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    expected_planner_frequency: 1.0
+    planner_plugins:
+    - global_planner
+    global_planner:
+      plugin: nav2_navfn_planner/NavfnPlanner
+      tolerance: 0.2
+      use_astar: false
+      allow_unknown: true

@@ -1,17 +1,17 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.16)
 project(wonik_navigation)
-
-find_package(catkin REQUIRED)
-catkin_python_setup()
-catkin_package()
-
-catkin_install_python(PROGRAMS
-  scripts/cmd_vel_gate.py
-  scripts/obstacle_detector.py
-  scripts/route_supervisor.py
-  scripts/zone_manager.py
-  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-install(DIRECTORY config launch maps rviz
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_options(-Wall -Wextra -Wpedantic)
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+ament_python_install_package(${PROJECT_NAME} PACKAGE_DIR src/${PROJECT_NAME})
+install(PROGRAMS scripts/cmd_vel_gate.py scripts/obstacle_detector.py scripts/route_supervisor.py scripts/zone_manager.py DESTINATION lib/${PROJECT_NAME})
+install(DIRECTORY launch config maps rviz DESTINATION share/${PROJECT_NAME})
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(safety test/test_safety.py APPEND_ENV PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_add_pytest_test(ros2_nodes test/test_ros2_nodes.py TIMEOUT 60 APPEND_ENV ROS_DOMAIN_ID=174 ROS_LOCALHOST_ONLY=1 PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src)
+  ament_add_pytest_test(supervisor_nav2 test/test_supervisor_nav2.py TIMEOUT 90 APPEND_ENV ROS_DOMAIN_ID=174 ROS_LOCALHOST_ONLY=1 PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
+ament_package()

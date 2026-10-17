@@ -4,16 +4,19 @@
 #include <cmath>
 
 #include <angles/angles.h>
-#include <base_local_planner/goal_functions.h>
-#include <nav_msgs/Path.h>
-#include <pluginlib/class_list_macros.h>
-#include <tf2/utils.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
-PLUGINLIB_EXPORT_CLASS(pure_pursuit_local_planner::PurePursuitLocalPlanner, nav_core::BaseLocalPlanner)
+#include <local_planner_checks/footprint_checker.h>
+#include <nav_msgs/msg/path.hpp>
+#include <pluginlib/class_list_macros.hpp>
+#include <tf2/utils.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
+PLUGINLIB_EXPORT_CLASS(pure_pursuit_local_planner::PurePursuitLocalPlanner, nav2_core::Controller)
 
 namespace pure_pursuit_local_planner
 {
+
+namespace checks = local_planner_checks;
 
 namespace
 {
@@ -78,42 +81,54 @@ PurePursuitLocalPlanner::PurePursuitLocalPlanner()
 {
 }
 
+bool PurePursuitLocalPlanner::odometryFresh(const rclcpp::Time &now) const
+{
+    return std::fabs((now - m_odometry->header.stamp).seconds()) <= m_odom_timeout;
+}
+
 PurePursuitLocalPlanner::~PurePursuitLocalPlanner()
 {
 }
 
-bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_vel)
+bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_vel)
 {
-    boost::mutex::scoped_lock lock(m_odometry_mutex);
+    std::lock_guard<std::mutex> lock(m_odometry_mutex);
 
-    cmd_vel = geometry_msgs::Twist();
+    cmd_vel = geometry_msgs::msg::Twist();
 
     if (!m_odometry)
     {
-        ROS_WARN_NAMED("PurePursuitLocalPlanner", "Waiting for odometry ...");
+        RCLCPP_WARN(m_node->get_logger(), "Waiting for odometry ...");
         return false;
     }
     if (m_global_plan.empty())
     {
-        ROS_WARN_NAMED("PurePursuitLocalPlanner", "Global plan is empty!");
+        RCLCPP_WARN(m_node->get_logger(), "Global plan is empty!");
         return false;
     }
 
     // compute delta time (ROS time, so the limits hold in simulation time as well)
-    const ros::Time time_now = ros::Time::now();
-    const double dt = std::min(std::max((time_now - m_last_time).toSec(), 0.0), 0.1);
+    const rclcpp::Time time_now = m_node->now();
+    if (!odometryFresh(time_now))
+    {
+        RCLCPP_WARN_THROTTLE(m_node->get_logger(), *m_node->get_clock(), 1000, "odometry is %.2f s old: not driving on it",
+                                (time_now - m_odometry->header.stamp).seconds());
+        m_last_cmd_vel = geometry_msgs::msg::Twist();
+        return false;
+    }
+    const double dt = std::min(std::max((time_now - m_last_time).seconds(), 0.0), 0.1);
     m_last_time = time_now;
 
     // get latest global to local transform (map to odom)
     tf2::Stamped<tf2::Transform> global_to_local;
     try
     {
-        auto msg = m_tf->lookupTransform(m_local_frame, m_global_frame, ros::Time(), ros::Duration(0));
+        auto msg = m_tf->lookupTransform(m_local_frame, m_global_frame, rclcpp::Time(0, 0, RCL_ROS_TIME), rclcpp::Duration::from_seconds(0));
         tf2::fromMsg(msg, global_to_local);
     }
     catch (...)
     {
-        ROS_WARN_NAMED("PurePursuitLocalPlanner", "lookupTransform(%s, %s) failed", m_local_frame.c_str(),
+        RCLCPP_WARN(m_node->get_logger(), "lookupTransform(%s, %s) failed", m_local_frame.c_str(),
                        m_global_frame.c_str());
         return false;
     }
@@ -134,7 +149,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
     const double yaw = tf2::getYaw(local_pose.getRotation());
     const tf2::Vector3 pos(local_pose.getOrigin().x(), local_pose.getOrigin().y(), 0);
     const tf2::Transform robot(createQuaternionFromYaw(yaw), pos);
-    const bool is_stopped = base_local_planner::stopped(*m_odometry, m_limits.theta_stopped_vel,
+    const bool is_stopped = local_planner_checks::stopped(*m_odometry, m_limits.theta_stopped_vel,
                                                         m_limits.trans_stopped_vel);
 
     // closest point, remaining path and lookahead target
@@ -152,13 +167,15 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
 
     double control_vel_x = 0;
     double control_yawrate = 0;
+    double planned_speed = 0;
+    double rotation_left = 0;
 
     if (remaining <= m_limits.xy_goal_tolerance && m_state != STATE_ROTATING)
     {
         if (is_stopped && m_state != STATE_GOAL)
         {
             m_state = STATE_GOAL;
-            ROS_INFO_NAMED("PurePursuitLocalPlanner", "end of path reached");
+            RCLCPP_INFO(m_node->get_logger(), "end of path reached");
         }
     }
     else if (m_state == STATE_ROTATING)
@@ -169,6 +186,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
             control_yawrate = std::copysign(
                 std::max(std::min(profile, m_limits.max_vel_theta), m_limits.min_vel_theta), yaw_error);
             control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_limits.acc_lim_theta * dt);
+            rotation_left = yaw_error;
         }
         else if (is_stopped)
         {
@@ -192,36 +210,7 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
             vel_x = std::min(vel_x, m_max_curve_vel / std::fabs(curvature));
         }
         vel_x = std::max(vel_x, m_limits.min_vel_trans);
-
-        // footprint check along the path ahead, up to the braking distance plus min_stop_dist
-        const double check_dist = vel_x * vel_x / (2 * m_dec_lim_x) + m_min_stop_dist;
-        base_local_planner::CostmapModel world_model(*m_cost_map->getCostmap());
-        const std::vector<geometry_msgs::Point> footprint = m_cost_map->getRobotFootprint();
-        bool blocked = false;
-        double travelled = 0;
-        for (std::size_t i = m_closest; i + 1 < local_plan.size() && travelled <= check_dist && !blocked; ++i)
-        {
-            const tf2::Vector3 d = local_plan[i + 1] - local_plan[i];
-            travelled += d.length();
-            if (travelled > 0.05 || i == m_closest)
-            {
-                blocked = world_model.footprintCost(local_plan[i].x(), local_plan[i].y(), ::atan2(d.y(), d.x()),
-                                                    footprint) == -1;
-            }
-        }
-        if (blocked)
-        {
-            if (m_state != STATE_BLOCKED)
-            {
-                ROS_WARN_NAMED("PurePursuitLocalPlanner", "obstacle on the path ahead, stopping");
-            }
-            m_state = STATE_BLOCKED;
-            vel_x = 0;
-        }
-        else
-        {
-            m_state = STATE_TRANSLATING;
-        }
+        planned_speed = vel_x;
 
         control_vel_x = std::min(vel_x, m_last_cmd_vel.linear.x + m_limits.acc_lim_x * dt);
 
@@ -229,34 +218,110 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
         control_yawrate = control_vel_x * curvature;
         control_yawrate = control_yawrate * m_low_pass_gain + m_last_cmd_vel.angular.z * (1 - m_low_pass_gain);
         control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_trans_acc_lim_theta * dt);
+        m_state = STATE_TRANSLATING;
     }
 
-    cmd_vel.linear.x = std::min(std::max(control_vel_x, 0.0), m_limits.max_vel_x);
-    cmd_vel.angular.z = std::min(std::max(control_yawrate, -m_limits.max_vel_theta), m_limits.max_vel_theta);
-    m_last_cmd_vel = cmd_vel;
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = std::min(std::max(control_vel_x, 0.0), m_limits.max_vel_x);
+    cmd.angular.z = std::min(std::max(control_yawrate, -m_limits.max_vel_theta), m_limits.max_vel_theta);
+    if (!commandIsFree(cmd, planned_speed, rotation_left, local_plan, robot, yaw))
+    {
+        if (m_state == STATE_TRANSLATING)
+        {
+            m_state = STATE_BLOCKED; // re-evaluated every cycle; continues once the way is clear
+        }
+        cmd = geometry_msgs::msg::Twist();
+    }
+    cmd_vel = cmd;
+    m_last_cmd_vel = cmd;
 
     // publish the path ahead (local frame) for visualization
-    nav_msgs::Path local_path;
+    nav_msgs::msg::Path local_path;
     local_path.header.frame_id = m_local_frame;
     local_path.header.stamp = m_odometry->header.stamp;
     for (std::size_t i = m_closest; i < local_plan.size(); ++i)
     {
-        geometry_msgs::PoseStamped p;
+        geometry_msgs::msg::PoseStamped p;
         p.header = local_path.header;
         p.pose.position.x = local_plan[i].x();
         p.pose.position.y = local_plan[i].y();
         p.pose.orientation.w = 1;
         local_path.poses.push_back(p);
     }
-    m_local_plan_pub.publish(local_path);
+    m_local_plan_pub->publish(local_path);
+    return true;
+}
+
+bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed,
+                                            double rotation_left, const std::vector<tf2::Vector3> &local_plan,
+                                            const tf2::Transform &robot, double yaw)
+{
+    const double v_cmd = std::fabs(cmd.linear.x);
+    if (v_cmd < 1e-3 && std::fabs(cmd.angular.z) < 1e-3)
+    {
+        return true; // stopping
+    }
+    nav2_costmap_2d::Costmap2D *costmap = m_cost_map->getCostmap();
+    std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> lock(*costmap->getMutex());
+    const checks::FootprintChecker checker(*costmap, m_cost_map->getRobotFootprint());
+    const checks::Pose2D start{robot.getOrigin().x(), robot.getOrigin().y(), yaw};
+
+    checks::CheckResult result;
+    const char *what = "";
+    if (v_cmd >= 1e-3)
+    {
+        // over the distance the base needs to stop (measured, commanded or planned speed) plus min_stop_dist:
+        // 1. the motion this command starts, from where the robot is (it may be off the path, or cut a corner)
+        const double dist = checks::stoppingDistance(m_odometry->twist.twist.linear.x, std::max(v_cmd, planned_speed),
+                                                     m_dec_lim_x, m_collision_latency, m_min_stop_dist);
+        result = checker.checkTwist(start, cmd.linear.x, 0, cmd.angular.z, dist / v_cmd);
+        what = "driving";
+        // 2. the path ahead from its closest point
+        if (result.free())
+        {
+            std::vector<checks::Pose2D> path;
+            for (std::size_t i = m_closest; i < local_plan.size(); ++i)
+            {
+                const tf2::Vector3 &a = local_plan[i];
+                const tf2::Vector3 &b = local_plan[std::min(i + 1, local_plan.size() - 1)];
+                const double heading = (b - a).length() > 1e-6 ? ::atan2(b.y() - a.y(), b.x() - a.x())
+                                                               : (path.empty() ? yaw : path.back().yaw);
+                path.push_back({a.x(), a.y(), heading});
+            }
+            result = checker.checkPath(path, dist);
+            what = "path ahead";
+        }
+    }
+    else
+    {
+        result = checker.checkRotation(start, rotation_left + std::copysign(m_rotation_margin, cmd.angular.z));
+        what = "turning in place";
+    }
+
+    if (!result.free())
+    {
+        if (!m_blocked)
+        {
+            RCLCPP_WARN(m_node->get_logger(), "%s: %s after %.2f m / %.0f deg, stopping", what,
+                           checks::toString(result.collision), result.distance,
+                           angles::to_degrees(std::fabs(result.angle)));
+        }
+        m_blocked = true;
+        return false;
+    }
+    if (m_blocked)
+    {
+        RCLCPP_INFO(m_node->get_logger(), "the way is clear again");
+    }
+    m_blocked = false;
     return true;
 }
 
 bool PurePursuitLocalPlanner::isGoalReached()
 {
-    boost::mutex::scoped_lock lock(m_odometry_mutex);
+    std::lock_guard<std::mutex> lock(m_odometry_mutex);
 
-    if (!m_odometry)
+    if (!m_odometry || !odometryFresh(m_node->now()))
     {
         return false;
     }
@@ -264,17 +329,35 @@ bool PurePursuitLocalPlanner::isGoalReached()
     {
         return true;
     }
-    const bool is_reached = m_state == STATE_GOAL &&
-        base_local_planner::stopped(*m_odometry, m_limits.theta_stopped_vel, m_limits.trans_stopped_vel);
+    bool is_reached = false;
+    if (m_state == STATE_GOAL)
+    {
+        // the end of the path by actual position (any heading: the route controller turns afterwards)
+        tf2::Stamped<tf2::Transform> global_to_local;
+        try
+        {
+            auto msg = m_tf->lookupTransform(m_local_frame, m_global_frame, rclcpp::Time(0, 0, RCL_ROS_TIME), rclcpp::Duration::from_seconds(0));
+            tf2::fromMsg(msg, global_to_local);
+        }
+        catch (...)
+        {
+            return false;
+        }
+        const geometry_msgs::msg::Point &e = m_global_plan.back().pose.position;
+        const tf2::Vector3 end = global_to_local * tf2::Vector3(e.x, e.y, 0);
+        const checks::Pose2D robot{m_odometry->pose.pose.position.x, m_odometry->pose.pose.position.y, 0};
+        is_reached = checks::goalReached(robot, {end.x(), end.y(), 0}, local_planner_checks::stopped(
+            *m_odometry, m_limits.theta_stopped_vel, m_limits.trans_stopped_vel), m_limits.xy_goal_tolerance, M_PI);
+    }
     if (!m_is_goal_reached || !is_reached)
     {
-        m_first_goal_reached_time = ros::Time::now();
+        m_first_goal_reached_time = m_node->now();
     }
     m_is_goal_reached = is_reached;
-    return is_reached && (ros::Time::now() - m_first_goal_reached_time).toSec() >= m_goal_tune_time;
+    return is_reached && (m_node->now() - m_first_goal_reached_time).seconds() >= m_goal_tune_time;
 }
 
-bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::PoseStamped> &plan)
+bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::msg::PoseStamped> &plan)
 {
     if (plan.empty())
     {
@@ -283,15 +366,16 @@ bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::PoseStamp
     m_global_plan = plan;
     m_global_frame = plan.front().header.frame_id;
     m_closest = 0;
-    m_last_time = ros::Time::now();
-    m_first_goal_reached_time = ros::Time();
+    m_last_time = m_node->now();
+    m_first_goal_reached_time = rclcpp::Time(0, 0, RCL_ROS_TIME);
     m_is_goal_reached = false;
+    m_blocked = false;
     // A replanned path while driving continues from the current motion: keep translating unless the
     // new path starts far off the heading (decided in the next control step).
-    m_last_cmd_vel = geometry_msgs::Twist();
+    m_last_cmd_vel = geometry_msgs::msg::Twist();
     {
-        boost::mutex::scoped_lock lock(m_odometry_mutex);
-        if (m_odometry)
+        std::lock_guard<std::mutex> lock(m_odometry_mutex);
+        if (m_odometry && odometryFresh(m_node->now()))
         {
             m_last_cmd_vel.linear.x = std::max(m_odometry->twist.twist.linear.x, 0.0);
             m_last_cmd_vel.angular.z = m_odometry->twist.twist.angular.z;
@@ -301,48 +385,75 @@ bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::PoseStamp
     return true;
 }
 
-void PurePursuitLocalPlanner::initialize(std::string name, tf2_ros::Buffer *tf, costmap_2d::Costmap2DROS *costmap_ros)
+void PurePursuitLocalPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent, std::string name,
+    std::shared_ptr<tf2_ros::Buffer> tf, std::shared_ptr<nav2_costmap_2d::Costmap2DROS> costmap_ros)
 {
-    ros::NodeHandle nh;
-    ros::NodeHandle private_nh("~/" + name);
+    m_node = parent.lock();
+    if (!m_node) throw std::runtime_error("Controller parent expired");
+    m_name = std::move(name);
 
-    m_limits.acc_lim_x = private_nh.param<double>("acc_lim_x", 0.3);
-    m_limits.acc_lim_theta = private_nh.param<double>("acc_lim_theta", 0.6);
-    m_limits.max_vel_x = private_nh.param<double>("max_vel_x", 0.5);
-    m_limits.min_vel_trans = private_nh.param<double>("min_trans_vel", 0.05);
-    m_limits.max_vel_theta = private_nh.param<double>("max_rot_vel", 0.6);
-    m_limits.min_vel_theta = private_nh.param<double>("min_rot_vel", 0.05);
-    m_limits.theta_stopped_vel = private_nh.param<double>("rot_stopped_vel", 0.02);
-    m_limits.trans_stopped_vel = private_nh.param<double>("trans_stopped_vel", 0.02);
-    m_limits.xy_goal_tolerance = private_nh.param<double>("xy_goal_tolerance", 0.1);
+    m_limits.acc_lim_x = param<double>("acc_lim_x", 0.3);
+    m_limits.acc_lim_theta = param<double>("acc_lim_theta", 0.6);
+    m_limits.max_vel_x = param<double>("max_vel_x", 0.5);
+    m_limits.min_vel_trans = param<double>("min_trans_vel", 0.05);
+    m_limits.max_vel_theta = param<double>("max_rot_vel", 0.6);
+    m_limits.min_vel_theta = param<double>("min_rot_vel", 0.05);
+    m_limits.theta_stopped_vel = param<double>("rot_stopped_vel", 0.02);
+    m_limits.trans_stopped_vel = param<double>("trans_stopped_vel", 0.02);
+    m_limits.xy_goal_tolerance = param<double>("xy_goal_tolerance", 0.1);
 
-    m_dec_lim_x = private_nh.param<double>("dec_lim_x", 0.3);
-    m_lookahead_dist = private_nh.param<double>("lookahead_dist", 0.6);
-    m_lookahead_time = private_nh.param<double>("lookahead_time", 0.5);
-    m_start_yaw_error = private_nh.param<double>("start_yaw_error", 0.5);
-    m_max_curve_vel = private_nh.param<double>("max_curve_vel", 0.3);
-    m_trans_acc_lim_theta = private_nh.param<double>("trans_acc_lim_theta", 0.4);
-    m_low_pass_gain = private_nh.param<double>("low_pass_gain", 0.5);
-    m_min_stop_dist = private_nh.param<double>("min_stop_dist", 0.3);
-    m_goal_tune_time = private_nh.param<double>("goal_tune_time", 0.3);
-    m_local_frame = private_nh.param<std::string>("local_frame", "odom");
-    const std::string odom_topic = private_nh.param<std::string>("odom_topic", "/odom");
+    m_dec_lim_x = param<double>("dec_lim_x", 0.3);
+    m_lookahead_dist = param<double>("lookahead_dist", 0.6);
+    m_lookahead_time = param<double>("lookahead_time", 0.5);
+    m_start_yaw_error = param<double>("start_yaw_error", 0.5);
+    m_max_curve_vel = param<double>("max_curve_vel", 0.3);
+    m_trans_acc_lim_theta = param<double>("trans_acc_lim_theta", 0.4);
+    m_low_pass_gain = param<double>("low_pass_gain", 0.5);
+    m_min_stop_dist = param<double>("min_stop_dist", 0.3);
+    m_odom_timeout = param<double>("odom_timeout", 0.5);
+    m_collision_latency = param<double>("collision_latency", 0.3);
+    m_rotation_margin = param<double>("rotation_margin", 0.1);
+    m_goal_tune_time = param<double>("goal_tune_time", 0.3);
+    m_local_frame = param<std::string>("local_frame", "odom");
+    const std::string odom_topic = param<std::string>("odom_topic", "/odom");
 
     m_tf = tf;
     m_cost_map = costmap_ros;
     m_base_frame = costmap_ros->getBaseFrameID();
 
-    m_odom_sub = nh.subscribe(odom_topic, 1, &PurePursuitLocalPlanner::odomCallback, this);
-    m_local_plan_pub = private_nh.advertise<nav_msgs::Path>("local_plan", 1);
+    m_odom_sub = m_node->create_subscription<nav_msgs::msg::Odometry>(odom_topic, rclcpp::SensorDataQoS(), std::bind(&PurePursuitLocalPlanner::odomCallback, this, std::placeholders::_1));
+    m_local_plan_pub = m_node->create_publisher<nav_msgs::msg::Path>(m_name + "/local_plan", 1);
+    m_default_max_vel_x = m_limits.max_vel_x;
+    m_last_time = m_node->now();
 
-    ROS_INFO_NAMED("PurePursuitLocalPlanner", "base_frame=%s, local_frame=%s, max_vel_x=%.2f, max_curve_vel=%.2f",
+    RCLCPP_INFO(m_node->get_logger(), "base_frame=%s, local_frame=%s, max_vel_x=%.2f, max_curve_vel=%.2f",
                    m_base_frame.c_str(), m_local_frame.c_str(), m_limits.max_vel_x, m_max_curve_vel);
 }
 
-void PurePursuitLocalPlanner::odomCallback(const nav_msgs::Odometry::ConstPtr &msg)
+void PurePursuitLocalPlanner::odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg)
 {
-    boost::mutex::scoped_lock lock(m_odometry_mutex);
+    std::lock_guard<std::mutex> lock(m_odometry_mutex);
     m_odometry = msg;
+}
+
+
+void PurePursuitLocalPlanner::cleanup() { m_odom_sub.reset(); m_local_plan_pub.reset(); m_odometry.reset(); m_global_plan.clear(); }
+void PurePursuitLocalPlanner::activate() { m_local_plan_pub->on_activate(); }
+void PurePursuitLocalPlanner::deactivate() { m_local_plan_pub->on_deactivate(); }
+void PurePursuitLocalPlanner::setPlan(const nav_msgs::msg::Path &path) {
+    if (!setPlan(path.poses)) throw nav2_core::PlannerException("Empty controller path");
+}
+geometry_msgs::msg::TwistStamped PurePursuitLocalPlanner::computeVelocityCommands(
+    const geometry_msgs::msg::PoseStamped &, const geometry_msgs::msg::Twist &, nav2_core::GoalChecker *) {
+    geometry_msgs::msg::TwistStamped cmd;
+    cmd.header.stamp = m_node->now();
+    cmd.header.frame_id = m_base_frame;
+    if (!computeVelocityCommands(cmd.twist)) throw nav2_core::PlannerException("Controller input unavailable or stale");
+    return cmd;
+}
+void PurePursuitLocalPlanner::setSpeedLimit(const double &limit, const bool &percentage) {
+    m_limits.max_vel_x = limit <= 0 ? m_default_max_vel_x :
+        std::min(m_default_max_vel_x, percentage ? m_default_max_vel_x * limit / 100.0 : limit);
 }
 
 } // namespace pure_pursuit_local_planner

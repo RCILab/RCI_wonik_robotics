@@ -1,7 +1,5 @@
-<library path="lib/libstop_go_local_planner">
-  <class name="stop_go_local_planner/StopGoLocalPlanner" type="stop_go_local_planner::StopGoLocalPlanner" base_class_type="nav_core::BaseLocalPlanner">
-    <description>
-      Stop-and-go route follower: straight segments with in-place rotations at corners, pure pursuit, no obstacle avoidance.
-    </description>
+<library path="stop_go_local_planner">
+  <class name="stop_go_local_planner/StopGoLocalPlanner" type="stop_go_local_planner::StopGoLocalPlanner" base_class_type="nav2_core::Controller">
+    <description>Humble controller retaining the reviewed Wonik route-following algorithm.</description>
   </class>
 </library>

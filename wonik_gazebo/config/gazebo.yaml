@@ -1,0 +1,5 @@
+gazebo:
+  ros__parameters:
+    # Match the 100 Hz base loop; the default 10 Hz clock makes valid sensor
+    # timestamps appear to be in the future between clock messages.
+    publish_rate: 100.0

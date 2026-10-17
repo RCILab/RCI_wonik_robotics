@@ -26,7 +26,7 @@ class OdometryIntegrator
         }
     }
 
-    // Returns true when the pose was advanced. Non-increasing stamps are ignored.
+    // Returns true when the pose was advanced. Non-increasing stamps and non-finite input are ignored.
     bool update(const Twist2D &twist, double stamp_sec);
 
     void reset(const Pose2D &pose = Pose2D{});

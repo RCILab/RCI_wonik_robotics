@@ -1,50 +1,26 @@
 #!/usr/bin/env python3
-"""Route supervisor: drives a fixed route (waypoints from config/routes/<route>.yaml) through
-move_base_flex and switches between two behaviours by zone or by topic:
+"""Route/zone supervisor using Nav2 FollowPath and ComputePathToPose.
 
-  FOLLOW  the route itself with the route controller (stop_go: stops and turns at waypoints; obstacles
-          make the cmd_vel gate stop the robot)
-  AVOID   in an avoid zone: a detour from the robot to the route point just past the zone exit is
-          planned with the global planner (around obstacles in the global costmap), replanned every
-          replan_period and followed with the avoid controller; at that point the robot rejoins the
-          route in FOLLOW.
-
-Parameters
-  ~route             route yaml (frame_id, waypoints: [[x, y], ...])
-  ~zones             zones yaml (see wonik_navigation/zones.py); optional
-  ~controller        route controller (default stop_go)
-  ~avoid_controller  detour controller (default avoid)
-  ~planner           move_base_flex planner for detours (default global_planner)
-  ~replan_period     [s] detour replanning period (default 1.0)
-  ~rejoin_margin     [m] the detour reaches the route this far past the avoid zone exit (default 1.0)
-  ~rejoin_tail       [m] of route appended to the detour; the route controller takes over halfway
-                     along it, once the robot is back on the route line and heading (default 1.5)
-Topics
-  current_zone       (std_msgs/String, in)  from zone_manager
-  ~mode              (std_msgs/String, in)  auto (zones decide, default) | stop_go | avoid
-  ~controller        (std_msgs/String, in)  route controller for the rest of the route
-  ~active_controller (std_msgs/String, out, latched)
-  ~state             (std_msgs/String, out, latched)  FOLLOW | AVOID | DONE
-  ~route_path        (nav_msgs/Path, out, latched)  the whole route, for RViz
+FOLLOW -> AVOID_PREP -> AVOID -> FOLLOW, with AVOID_HOLD on a failed running detour.
+Only feedback from the current accepted detour opens the gate. Planning and goal
+acceptance are asynchronous: deadlines and safety heartbeats keep running.
 """
 import math
-import threading
-
-import actionlib
-import rospy
-import tf2_ros
 import yaml
+import rclpy
+from rclpy.time import Time
+from rclpy.action import ActionClient
+from action_msgs.msg import GoalStatus
+import tf2_ros
 from geometry_msgs.msg import PoseStamped
-from mbf_msgs.msg import ExePathAction, ExePathGoal, ExePathResult, GetPathAction, GetPathGoal, GetPathResult
 from nav_msgs.msg import Path
+from nav2_msgs.action import FollowPath, ComputePathToPose
 from std_msgs.msg import String
-from tf.transformations import quaternion_from_euler
-
+from tf_transformations import quaternion_from_euler
+from wonik_navigation.ros_node import ManagedNode, latched_qos, spin_node
 from wonik_navigation.zones import inside, load_zones
 
-SPACING = 0.05  # [m] between route poses
-OUTCOMES = {v: k for k, v in vars(ExePathResult).items() if k.isupper() and isinstance(v, int)}
-
+SPACING = 0.05
 
 def densify(waypoints, frame_id):
     """Straight lines between the waypoints, one pose every SPACING, oriented along each line."""
@@ -54,7 +30,7 @@ def densify(waypoints, frame_id):
     def pose(x, y, yaw):
         p = PoseStamped()
         p.header.frame_id = frame_id
-        p.pose.position.x, p.pose.position.y = x, y
+        p.pose.position.x, p.pose.position.y = float(x), float(y)
         (p.pose.orientation.x, p.pose.orientation.y,
          p.pose.orientation.z, p.pose.orientation.w) = quaternion_from_euler(0, 0, yaw)
         return p
@@ -69,45 +45,43 @@ def densify(waypoints, frame_id):
     return path
 
 
-class RouteSupervisor:
+class RouteSupervisor(ManagedNode):
     def __init__(self):
-        with open(rospy.get_param("~route")) as f:
+        super().__init__("route_supervisor")
+        with open(self.param("route", "")) as f:
             route = yaml.safe_load(f)
         self.path = densify(route["waypoints"], route.get("frame_id", "map"))
-        zones_file = rospy.get_param("~zones", "")
+        zones_file = self.param("zones", "")
         self.avoid_zones = [z for z in load_zones(zones_file)[1] if z["type"] == "avoid"] if zones_file else []
-        self.controller = rospy.get_param("~controller", "stop_go")
-        self.avoid_controller = rospy.get_param("~avoid_controller", "avoid")
-        self.planner = rospy.get_param("~planner", "global_planner")
-        self.replan_period = rospy.get_param("~replan_period", 1.0)
-        self.rejoin_margin = rospy.get_param("~rejoin_margin", 1.0)
-        self.rejoin_tail = rospy.get_param("~rejoin_tail", 1.5)
+        for key, value in dict(controller="stop_go", avoid_controller="avoid", planner="global_planner",
+                               replan_period=1.0, plan_timeout=2.0, zone_timeout=1.0,
+                               rejoin_margin=1.0, rejoin_tail=1.5).items():
+            setattr(self, key, self.param(key, value))
+        self.state, self.mode = "FOLLOW", "auto"
+        self.zone = ("none", None)
+        self.start_index = self.rejoin_index = self.handover_index = 0
+        self.last_plan = -float("inf")
+        self.goal_seq = self.plan_seq = 0
+        self.goal_kind = self.goal_controller = None
+        self.goal_confirmed = False
+        self.goal_handle = self.plan_handle = None
+        self.plan_pending = False
+        self.started = self.done = False
+        self.tf = tf2_ros.Buffer(node=self)
+        self.tf_listener = tf2_ros.TransformListener(self.tf, self)
+        self.route_pub = self.create_publisher(Path, "~/route_path", latched_qos())
+        self.active_pub = self.create_publisher(String, "~/active_controller", latched_qos())
+        self.state_pub = self.create_publisher(String, "~/state", 1)
+        self.exe = ActionClient(self, FollowPath, "follow_path")
+        self.get_path = ActionClient(self, ComputePathToPose, "compute_path_to_pose")
+        self.create_subscription(String, "current_zone", self.on_zone, 1)
+        self.create_subscription(String, "~/mode", self.on_mode, 1)
+        self.create_subscription(String, "~/controller", self.on_controller, 1)
+        self.route_pub.publish(self.path)
+        self.create_timer(0.1, self.tick)
 
-        self.lock = threading.RLock()
-        self.state = "FOLLOW"
-        self.mode = "auto"
-        self.zone = "none"
-        self.start_index = 0     # first route pose of the current FOLLOW goal
-        self.rejoin_index = 0    # route index where the current detour reaches the route
-        self.handover_index = 0  # route index where the route controller takes over again
-        self.last_plan = None
-        self.goal_seq = 0
-        self.done = threading.Event()
-
-        self.tf = tf2_ros.Buffer()
-        tf2_ros.TransformListener(self.tf)
-        self.route_pub = rospy.Publisher("~route_path", Path, queue_size=1, latch=True)
-        self.active_pub = rospy.Publisher("~active_controller", String, queue_size=1, latch=True)
-        self.state_pub = rospy.Publisher("~state", String, queue_size=1, latch=True)
-        self.exe = actionlib.SimpleActionClient("move_base_flex/exe_path", ExePathAction)
-        self.get_path = actionlib.SimpleActionClient("move_base_flex/get_path", GetPathAction)
-        rospy.Subscriber("current_zone", String, lambda m: setattr(self, "zone", m.data), queue_size=1)
-        rospy.Subscriber("~mode", String, self.on_mode)
-        rospy.Subscriber("~controller", String, self.on_controller)
-
-    # ---- helpers ----
     def robot_xy(self):
-        t = self.tf.lookup_transform(self.path.header.frame_id, "base_footprint", rospy.Time(0), rospy.Duration(1.0))
+        t = self.tf.lookup_transform(self.path.header.frame_id, "base_footprint", Time())
         return t.transform.translation.x, t.transform.translation.y
 
     def robot_index(self, from_index):
@@ -128,127 +102,228 @@ class RouteSupervisor:
                 i += 1
         return min(i + int(round(self.rejoin_margin / SPACING)), len(poses) - 1)
 
-    def send_exe(self, poses, controller):
-        goal = ExePathGoal()
-        goal.path.header.frame_id = self.path.header.frame_id
-        goal.path.header.stamp = rospy.Time.now()
-        goal.path.poses = poses
-        goal.controller = controller
-        goal.concurrency_slot = 1
-        self.goal_seq += 1
-        seq = self.goal_seq
-        self.exe.send_goal(goal, done_cb=lambda s, r: self.on_done(seq, s, r))
-        self.active_pub.publish(String(data=controller))
+    def current_zone(self):
+        ztype, stamp = self.zone
+        if stamp is None or not 0 <= self.seconds() - stamp <= self.zone_timeout:
+            return "none"
+        return ztype
+
+    def want_avoid(self):
+        return self.mode == "avoid" or (self.mode == "auto" and self.current_zone() == "avoid" and bool(self.avoid_zones))
 
     def set_state(self, state):
+        if state != self.state:
+            self.info("state %s -> %s", self.state, state)
         self.state = state
         self.state_pub.publish(String(data=state))
 
-    # ---- behaviours ----
-    def follow(self, index):
-        self.set_state("FOLLOW")
+    def cancel_plan(self):
+        self.plan_seq += 1
+        self.plan_pending = False
+        if self.plan_handle is not None and rclpy.ok():
+            self.plan_handle.cancel_goal_async()
+        self.plan_handle = None
+
+    def send_exe(self, poses, controller, kind):
+        self.goal_seq += 1
+        seq = self.goal_seq
+        self.goal_kind, self.goal_controller, self.goal_confirmed = kind, controller, False
+        goal = FollowPath.Goal()
+        goal.path.header.frame_id = self.path.header.frame_id
+        goal.path.header.stamp = self.get_clock().now().to_msg()
+        goal.path.poses = poses
+        goal.controller_id = controller
+        goal.goal_checker_id = "avoid_goal" if kind == "detour" else "route_goal"
+        request = self.exe.send_goal_async(goal, feedback_callback=lambda fb: self.on_feedback(seq, fb))
+        request.add_done_callback(lambda future: self.on_accepted(seq, future))
+
+    def on_accepted(self, seq, future):
+        try:
+            handle = future.result()
+        except Exception as exc:
+            if seq == self.goal_seq:
+                self.on_done(seq, GoalStatus.STATUS_ABORTED, str(exc))
+            return
+        if seq != self.goal_seq or self.done:
+            if handle.accepted:
+                handle.cancel_goal_async()
+            return
+        if not handle.accepted:
+            self.on_done(seq, GoalStatus.STATUS_ABORTED, "goal rejected")
+            return
+        self.goal_handle = handle
+        handle.get_result_async().add_done_callback(lambda f: self.on_result(seq, f))
+
+    def on_result(self, seq, future):
+        try:
+            wrapped = future.result()
+            self.on_done(seq, wrapped.status, "")
+        except Exception as exc:
+            self.on_done(seq, GoalStatus.STATUS_ABORTED, str(exc))
+
+    def follow(self, index, state="FOLLOW"):
+        self.cancel_plan()
+        self.set_state(state)
         self.start_index = index
-        self.send_exe(self.path.poses[index:], self.controller)
-        rospy.loginfo("FOLLOW route from index %d (%d poses) with '%s'", index, len(self.path.poses) - index,
-                      self.controller)
+        self.send_exe(self.path.poses[index:], self.controller, "route")
+        self.info("route from index %d with %s", index, self.controller)
 
     def start_avoid(self):
         index = self.robot_index(self.start_index)
         last = len(self.path.poses) - 1
         self.rejoin_index = last if self.mode == "avoid" else self.exit_index(index)
         self.handover_index = min(self.rejoin_index + int(round(0.5 * self.rejoin_tail / SPACING)), last)
-        self.set_state("AVOID")
-        rospy.loginfo("AVOID from route index %d, rejoin at index %d, hand over at index %d",
-                      index, self.rejoin_index, self.handover_index)
-        self.plan_detour()
+        self.set_state("AVOID_PREP")
+        self.try_detour()
 
-    def plan_detour(self):
-        self.last_plan = rospy.get_time()
-        goal = GetPathGoal()
-        goal.use_start_pose = False
-        goal.target_pose = self.path.poses[self.rejoin_index]
-        goal.target_pose.header.stamp = rospy.Time.now()
-        goal.tolerance = 0.2
-        goal.planner = self.planner
-        goal.concurrency_slot = 2
-        self.get_path.send_goal(goal)
-        if not self.get_path.wait_for_result(rospy.Duration(2.0)):
-            self.get_path.cancel_goal()
-            rospy.logwarn("detour planning timed out")
+    def try_detour(self):
+        if self.plan_pending or not self.get_path.server_is_ready():
             return
-        result = self.get_path.get_result()
-        if result is None or result.outcome != GetPathResult.SUCCESS or len(result.path.poses) < 2:
-            rospy.logwarn("no detour: %s", result.message if result else "no result")
-            return
-        tail_end = min(self.rejoin_index + int(round(self.rejoin_tail / SPACING)), len(self.path.poses) - 1)
-        self.send_exe(result.path.poses + self.path.poses[self.rejoin_index + 1:tail_end + 1], self.avoid_controller)
+        self.last_plan = self.seconds()
+        self.plan_pending = True
+        self.plan_seq += 1
+        seq = self.plan_seq
+        goal = ComputePathToPose.Goal()
+        goal.use_start = False
+        goal.goal = self.path.poses[self.rejoin_index]
+        goal.goal.header.stamp = self.get_clock().now().to_msg()
+        goal.planner_id = self.planner
+        self.get_path.send_goal_async(goal).add_done_callback(lambda f: self.on_plan_accepted(seq, f))
 
-    def step(self):
-        """Called at 10 Hz: zone/mode driven switching and detour replanning."""
-        with self.lock:
-            if self.done.is_set():
+    def on_plan_accepted(self, seq, future):
+        try:
+            handle = future.result()
+        except Exception as exc:
+            if seq == self.plan_seq:
+                self.plan_pending = False
+                self.warn("planning request failed: %s", exc)
+            return
+        if seq != self.plan_seq:
+            if handle.accepted:
+                handle.cancel_goal_async()
+            return
+        if not handle.accepted:
+            self.plan_pending = False
+            self.warn("planning goal rejected")
+            return
+        self.plan_handle = handle
+        handle.get_result_async().add_done_callback(lambda f: self.on_plan_result(seq, f))
+
+    def on_plan_result(self, seq, future):
+        if seq != self.plan_seq:
+            return
+        self.plan_pending = False
+        self.plan_handle = None
+        try:
+            wrapped = future.result()
+            poses = wrapped.result.path.poses
+            if wrapped.status != GoalStatus.STATUS_SUCCEEDED or len(poses) < 2:
+                self.warn("no detour: retaining the current route/hold")
                 return
-            want_avoid = self.mode == "avoid" or (self.mode == "auto" and self.zone == "avoid" and bool(self.avoid_zones))
-            if self.state == "FOLLOW" and want_avoid:
-                self.start_avoid()
-            elif self.state == "AVOID":
-                x, y = self.robot_xy()
-                handover = self.path.poses[self.handover_index].pose.position
-                if self.mode == "stop_go" or math.hypot(handover.x - x, handover.y - y) < 0.35:
-                    self.follow(self.robot_index(self.rejoin_index if self.mode != "stop_go" else self.start_index))
-                elif rospy.get_time() - self.last_plan >= self.replan_period:
-                    self.plan_detour()
-
-    # ---- callbacks ----
-    def on_mode(self, msg):
-        if msg.data not in ("auto", "stop_go", "avoid"):
-            rospy.logwarn("unknown mode '%s' (auto | stop_go | avoid)", msg.data)
+        except Exception as exc:
+            self.warn("planning result failed: %s", exc)
             return
-        with self.lock:
-            rospy.loginfo("mode: %s -> %s", self.mode, msg.data)
+        if self.state not in ("AVOID_PREP", "AVOID", "AVOID_HOLD"):
+            return
+        end = min(self.rejoin_index + int(round(self.rejoin_tail / SPACING)), len(self.path.poses) - 1)
+        self.send_exe(poses + self.path.poses[self.rejoin_index + 1:end + 1], self.avoid_controller, "detour")
+
+    def tick(self):
+        self.state_pub.publish(String(data=self.state))
+        if self.done:
+            return
+        try:
+            if not self.started:
+                if not self.exe.server_is_ready():
+                    return
+                self.robot_xy()
+                self.started = True
+                self.follow(0)
+            if self.plan_pending and self.seconds() - self.last_plan > self.plan_timeout:
+                self.cancel_plan()
+                self.warn("detour planning timed out; retrying behind the gate")
+            want = self.want_avoid()
+            if self.state == "FOLLOW" and want:
+                self.start_avoid()
+            elif self.state == "AVOID_PREP":
+                if not want:
+                    self.cancel_plan()
+                    if self.goal_kind == "detour":
+                        self.follow(self.robot_index(self.start_index))
+                    else:
+                        self.set_state("FOLLOW")
+                elif self.seconds() - self.last_plan >= self.replan_period:
+                    self.try_detour()
+            elif self.state in ("AVOID", "AVOID_HOLD"):
+                if self.mode == "stop_go":
+                    self.follow(self.robot_index(self.start_index))
+                    return
+                if self.state == "AVOID":
+                    x, y = self.robot_xy()
+                    p = self.path.poses[self.handover_index].pose.position
+                    if math.hypot(p.x - x, p.y - y) < 0.35:
+                        self.follow(self.robot_index(self.rejoin_index))
+                        return
+                if self.seconds() - self.last_plan >= self.replan_period:
+                    self.try_detour()
+        except tf2_ros.TransformException as exc:
+            self.warn_throttle(5.0, "no robot pose: %s", exc)
+
+    def on_zone(self, msg):
+        self.zone = (msg.data, self.seconds())
+
+    def on_mode(self, msg):
+        if msg.data in ("auto", "stop_go", "avoid"):
+            self.info("mode: %s -> %s", self.mode, msg.data)
             self.mode = msg.data
+        else:
+            self.warn("unknown mode: %s", msg.data)
 
     def on_controller(self, msg):
-        with self.lock:
-            if self.done.is_set() or msg.data == self.controller:
-                return
-            rospy.loginfo("route controller '%s' -> '%s'", self.controller, msg.data)
+        if not self.done and msg.data != self.controller:
             self.controller = msg.data
-            if self.state == "FOLLOW":
-                self.follow(self.robot_index(self.start_index))
+            if self.started and self.state == "FOLLOW":
+                try:
+                    self.follow(self.robot_index(self.start_index))
+                except tf2_ros.TransformException as exc:
+                    self.warn("cannot switch controller: %s", exc)
 
-    def on_done(self, seq, state, result):
-        with self.lock:
-            if seq != self.goal_seq or (result is not None and result.outcome == ExePathResult.CANCELED):
-                return  # replaced by a newer goal
-            outcome = OUTCOMES.get(result.outcome, result.outcome) if result else state
-            if self.state == "AVOID":
-                if result is not None and result.outcome == ExePathResult.SUCCESS:
-                    self.follow(self.robot_index(self.rejoin_index))
-                else:
-                    rospy.logwarn("detour ended: %s, replanning", outcome)
-                return
-            rospy.loginfo("route finished: %s (%s)", outcome, result.message if result else "")
-            self.set_state("DONE")
-            self.done.set()
+    def on_feedback(self, seq, _feedback):
+        if seq != self.goal_seq or self.goal_confirmed:
+            return
+        self.goal_confirmed = True
+        self.active_pub.publish(String(data=self.goal_controller))
+        if self.goal_kind == "detour" and self.state in ("AVOID_PREP", "AVOID_HOLD"):
+            self.set_state("AVOID")
 
-    def run(self):
-        self.route_pub.publish(self.path)
-        rospy.loginfo("waiting for move_base_flex ...")
-        self.exe.wait_for_server()
-        if self.avoid_zones:
-            self.get_path.wait_for_server()
-        with self.lock:
-            self.follow(0)
-        rate = rospy.Rate(10)
-        while not rospy.is_shutdown() and not self.done.is_set():
+    def on_done(self, seq, status, message):
+        if seq != self.goal_seq or self.done:
+            return
+        self.goal_handle = None
+        success = status == GoalStatus.STATUS_SUCCEEDED
+        if self.goal_kind == "detour":
             try:
-                self.step()
-            except tf2_ros.TransformException as e:
-                rospy.logwarn_throttle(5.0, "no robot pose: %s", e)
-            rate.sleep()
+                if success:
+                    self.follow(self.robot_index(self.rejoin_index))
+                elif self.state == "AVOID_PREP":
+                    self.follow(self.robot_index(self.start_index), "AVOID_PREP")
+                else:
+                    self.set_state("AVOID_HOLD")
+            except tf2_ros.TransformException:
+                self.set_state("AVOID_HOLD")
+            return
+        self.info("route finished: status %d %s", status, message)
+        self.cancel_plan()
+        self.set_state("DONE")
+        self.done = True
 
+    def destroy_node(self):
+        self.done = True
+        self.goal_seq += 1
+        self.cancel_plan()
+        if self.goal_handle is not None and rclpy.ok():
+            self.goal_handle.cancel_goal_async()
+        return super().destroy_node()
 
 if __name__ == "__main__":
-    rospy.init_node("route_supervisor")
-    RouteSupervisor().run()
+    spin_node(RouteSupervisor)

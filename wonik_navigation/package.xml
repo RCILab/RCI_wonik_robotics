@@ -1,26 +1,17 @@
 <?xml version="1.0"?>
-<package format="2">
-  <name>wonik_navigation</name>
-  <version>0.1.0</version>
-  <description>2D SLAM, localization and route following for the Wonik AGVs (real robot and simulation)</description>
+<package format="3">
+  <name>wonik_navigation</name><version>0.3.0</version>
+  <description>Wonik QD robot: ROS 2 Humble wonik navigation.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
-
-  <buildtool_depend>catkin</buildtool_depend>
-
-  <exec_depend>pointcloud_to_laserscan</exec_depend>
-  <exec_depend>slam_toolbox</exec_depend>
-  <exec_depend>map_server</exec_depend>
-  <exec_depend>amcl</exec_depend>
-  <exec_depend>mbf_costmap_nav</exec_depend>
-  <exec_depend>mbf_msgs</exec_depend>
-  <exec_depend>global_planner</exec_depend>
-  <exec_depend>stop_go_local_planner</exec_depend>
-  <exec_depend>pure_pursuit_local_planner</exec_depend>
-  <exec_depend>actionlib</exec_depend>
-  <exec_depend>rospy</exec_depend>
-  <exec_depend>tf</exec_depend>
-  <exec_depend>tf2_ros</exec_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>tf_transformations</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -28,5 +19,19 @@
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
-  <exec_depend>rviz</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>stop_go_local_planner</exec_depend>
+  <exec_depend>pure_pursuit_local_planner</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
 </package>

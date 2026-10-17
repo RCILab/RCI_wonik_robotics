@@ -1,86 +1,135 @@
 Panels:
-  - Class: rviz/Displays
-    Name: Displays
+- Class: rviz_common/Displays
+  Name: Displays
 Visualization Manager:
-  Class: ""
+  Class: ''
   Displays:
-    - Class: rviz/Grid
-      Name: Grid
-      Enabled: true
-      Cell Size: 1
-      Plane Cell Count: 30
-      Reference Frame: <Fixed Frame>
-    - Class: rviz/Map
-      Name: Map
-      Enabled: true
-      Topic: /map
-      Alpha: 0.7
-      Color Scheme: map
-    - Class: rviz/RobotModel
-      Name: RobotModel
-      Enabled: true
-      Robot Description: robot_description
-    - Class: rviz/LaserScan
-      Name: Scan
-      Enabled: true
-      Topic: /scan
-      Size (m): 0.05
-      Style: Flat Squares
-      Color Transformer: FlatColor
-      Color: 255; 0; 0
-      Decay Time: 0
-    - Class: rviz/Path
-      Name: Route
-      Enabled: true
-      Topic: /route_supervisor/route_path
-      Color: 0; 120; 255
-      Line Style: Billboards
-      Line Width: 0.04
-    - Class: rviz/Path
-      Name: Remaining route (stop_go)
-      Enabled: true
-      Topic: /move_base_flex/stop_go/local_plan
-      Color: 255; 170; 0
-      Line Style: Billboards
-      Line Width: 0.03
-    - Class: rviz/Path
-      Name: Detour (avoid)
-      Enabled: true
-      Topic: /move_base_flex/avoid/local_plan
-      Color: 0; 200; 80
-      Line Style: Billboards
-      Line Width: 0.03
-    - Class: rviz/MarkerArray
-      Name: Zones
-      Enabled: true
-      Marker Topic: /zone_manager/markers
-    - Class: rviz/Marker
-      Name: Obstacle detection box
-      Enabled: true
-      Marker Topic: /obstacle_detector/box_marker
-    - Class: rviz/PointCloud2
-      Name: Depth camera
-      Enabled: false
-      Topic: /camera/depth/points
-      Size (m): 0.02
-      Style: Points
-      Color Transformer: FlatColor
-      Color: 0; 200; 255
-    - Class: rviz/Map
-      Name: Global costmap
-      Enabled: false
-      Topic: /move_base_flex/global_costmap/costmap
-      Color Scheme: costmap
-    - Class: rviz/Map
-      Name: Local costmap
-      Enabled: false
-      Topic: /move_base_flex/local_costmap/costmap
-      Color Scheme: costmap
-    - Class: rviz/Odometry
-      Name: Odometry
-      Enabled: false
-      Topic: /odom
-      Keep: 100
+  - Class: rviz_default_plugins/Grid
+    Name: Grid
+    Enabled: true
+    Cell Size: 1
+    Plane Cell Count: 30
+    Reference Frame: <Fixed Frame>
+  - Class: rviz_default_plugins/Map
+    Name: Map
+    Enabled: true
+    Alpha: 0.7
+    Color Scheme: map
+    Topic:
+      Value: /map
+      Depth: 5
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+  - Class: rviz_default_plugins/RobotModel
+    Name: RobotModel
+    Enabled: true
+    Description Source: Topic
+    Description Topic:
+      Value: /robot_description
+      Depth: 1
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+  - Class: rviz_default_plugins/LaserScan
+    Name: Scan
+    Enabled: true
+    Size (m): 0.05
+    Style: Flat Squares
+    Color Transformer: FlatColor
+    Color: 255; 0; 0
+    Decay Time: 0
+    Topic:
+      Value: /scan
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/Path
+    Name: Route
+    Enabled: true
+    Color: 0; 120; 255
+    Line Style: Billboards
+    Line Width: 0.04
+    Topic:
+      Value: /route_supervisor/route_path
+      Depth: 5
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+  - Class: rviz_default_plugins/Path
+    Name: Remaining route (stop_go)
+    Enabled: true
+    Color: 255; 170; 0
+    Line Style: Billboards
+    Line Width: 0.03
+    Topic:
+      Value: /stop_go/local_plan
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/Path
+    Name: Detour (avoid)
+    Enabled: true
+    Color: 0; 200; 80
+    Line Style: Billboards
+    Line Width: 0.03
+    Topic:
+      Value: /avoid/local_plan
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/MarkerArray
+    Name: Zones
+    Enabled: true
+    Topic:
+      Value: /zone_manager/markers
+      Depth: 5
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+  - Class: rviz_default_plugins/Marker
+    Name: Obstacle detection box
+    Enabled: true
+    Topic:
+      Value: /obstacle_detector/box_marker
+      Depth: 5
+      Durability Policy: Transient Local
+      Reliability Policy: Reliable
+  - Class: rviz_default_plugins/PointCloud2
+    Name: Depth camera
+    Enabled: false
+    Size (m): 0.02
+    Style: Points
+    Color Transformer: FlatColor
+    Color: 0; 200; 255
+    Topic:
+      Value: /camera/depth/points
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/Map
+    Name: Global costmap
+    Enabled: false
+    Color Scheme: costmap
+    Topic:
+      Value: /global_costmap/costmap
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/Map
+    Name: Local costmap
+    Enabled: false
+    Color Scheme: costmap
+    Topic:
+      Value: /local_costmap/costmap
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
+  - Class: rviz_default_plugins/Odometry
+    Name: Odometry
+    Enabled: false
+    Keep: 100
+    Topic:
+      Value: /odom
+      Depth: 5
+      Durability Policy: Volatile
+      Reliability Policy: Best Effort
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -88,16 +137,14 @@ Visualization Manager:
     Frame Rate: 30
   Name: root
   Tools:
-    - Class: rviz/Interact
-    - Class: rviz/MoveCamera
-    - Class: rviz/Select
-    - Class: rviz/SetInitialPose
-      Topic: /initialpose
-    - Class: rviz/SetGoal
-      Topic: /move_base_simple/goal
+  - Class: rviz_default_plugins/Interact
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/SetInitialPose
+    Topic: /initialpose
   Views:
     Current:
-      Class: rviz/TopDownOrtho
+      Class: rviz_default_plugins/TopDownOrtho
       Scale: 40
       X: 6
       Y: 3

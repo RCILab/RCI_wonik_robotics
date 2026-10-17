@@ -1,13 +1,11 @@
 <?xml version="1.0"?>
-<package format="2">
-  <name>wonik_cobot_v2_description</name>
-  <version>0.1.0</version>
-  <description>URDF/xacro, meshes and geometry of the Wonik cobot_v2 AGV (QD #2 type)</description>
+<package format="3">
+  <name>wonik_cobot_v2_description</name><version>0.3.0</version>
+  <description>Wonik QD robot: ROS 2 Humble wonik cobot v2 description.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
-
-  <buildtool_depend>catkin</buildtool_depend>
-
+  <buildtool_depend>ament_cmake</buildtool_depend>
   <exec_depend>xacro</exec_depend>
-  <exec_depend>velodyne_description</exec_depend>
+  <exec_depend>gazebo_plugins</exec_depend>
+  <export><build_type>ament_cmake</build_type></export>
 </package>

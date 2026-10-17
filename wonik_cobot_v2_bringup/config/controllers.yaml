@@ -1,13 +1,19 @@
-# gazebo_ros_control controllers. Joint names must match steer_joints / drive_joints in
-# wonik_cobot_v2_description/config/geometry.yaml.
-joint_state_controller:
-  type: joint_state_controller/JointStateController
-  publish_rate: 100
-
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    steer_controller:
+      type: position_controllers/JointGroupPositionController
+    drive_controller:
+      type: velocity_controllers/JointGroupVelocityController
 steer_controller:
-  type: position_controllers/JointGroupPositionController
-  joints: [front_right_steer_joint, rear_left_steer_joint]
-
+  ros__parameters:
+    joints:
+    - front_right_steer_joint
+    - rear_left_steer_joint
 drive_controller:
-  type: velocity_controllers/JointGroupVelocityController
-  joints: [front_right_drive_joint, rear_left_drive_joint]
+  ros__parameters:
+    joints:
+    - front_right_drive_joint
+    - rear_left_drive_joint

@@ -69,12 +69,18 @@ def link_xml(p):
         </visual>"""
 
 
+# Self-contained orange markers; no online Gazebo model database required.
 cones = "".join(f"""
-    <include>
-      <name>cone_{i}</name>
-      <uri>model://construction_cone</uri>
-      <pose>{x} {y} 0 0 0 0</pose>
-    </include>""" for i, (x, y) in enumerate([(13.4, 7.4), (-1.5, -1.5)]))
+    <model name="cone_{i}">
+      <static>true</static><pose>{x} {y} 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry></collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>1 0.4 0 1</ambient><diffuse>1 0.4 0 1</diffuse></material>
+        </visual>
+      </link>
+    </model>""" for i, (x, y) in enumerate([(13.4, 7.4), (-1.5, -1.5)]))
 
 world = f"""<?xml version="1.0"?>
 <!-- Wonik test hall ({X1 - X0:.0f} m x {Y1 - Y0:.0f} m), modelled on the test-site photos in 티로보틱스_QD.pptx.
@@ -82,8 +88,24 @@ world = f"""<?xml version="1.0"?>
      U (ㄷ) route around the central island is (0,0) -> (12,0) -> (12,6) -> (0,6). -->
 <sdf version="1.6">
   <world name="default">
-    <include><uri>model://ground_plane</uri></include>
-    <include><uri>model://sun</uri></include>
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows><pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse><specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <surface><friction><ode><mu>100</mu><mu2>50</mu2></ode></friction></surface>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>100 100</size></plane></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
     <physics name="default_physics" default="0" type="ode">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1</real_time_factor>

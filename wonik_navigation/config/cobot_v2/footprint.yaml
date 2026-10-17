@@ -1,5 +1,0 @@
-# cobot_v2 body (864 x 664 mm) plus 2 cm, in base_footprint
-global_costmap:
-  footprint: [[0.452, 0.352], [0.452, -0.352], [-0.452, -0.352], [-0.452, 0.352]]
-local_costmap:
-  footprint: [[0.452, 0.352], [0.452, -0.352], [-0.452, -0.352], [-0.452, 0.352]]

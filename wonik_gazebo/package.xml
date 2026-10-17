@@ -1,20 +1,15 @@
 <?xml version="1.0"?>
-<package format="2">
-  <name>wonik_gazebo</name>
-  <version>0.1.0</version>
-  <description>Gazebo layer for the Wonik AGVs: simulation launch files and the qd_kinematic_base plugin. Nothing here runs on the real robot.</description>
+<package format="3">
+  <name>wonik_gazebo</name><version>0.3.0</version>
+  <description>Wonik QD robot: ROS 2 Humble wonik gazebo.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
-
-  <buildtool_depend>catkin</buildtool_depend>
-
-  <depend>gazebo_ros</depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>qd_kinematics</depend>
-
-  <exec_depend>gazebo_plugins</exec_depend>
-  <exec_depend>gazebo_ros_control</exec_depend>
-  <exec_depend>velodyne_gazebo_plugins</exec_depend>
-  <exec_depend>controller_manager</exec_depend>
+  <depend>gazebo_dev</depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_ros2_control</exec_depend>
   <exec_depend>wonik_cobot_v2_bringup</exec_depend>
-  <exec_depend>wonik_cobot_v2_description</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <export><build_type>ament_cmake</build_type></export>
 </package>

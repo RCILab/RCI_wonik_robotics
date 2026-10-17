@@ -1,9 +1,8 @@
-cmake_minimum_required(VERSION 3.0.2)
+cmake_minimum_required(VERSION 3.16)
 project(wonik_cobot_v2_bringup)
-
-find_package(catkin REQUIRED)
-catkin_package()
-
-install(DIRECTORY config launch rviz
-  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
-)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_compile_options(-Wall -Wextra -Wpedantic)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
+ament_package()

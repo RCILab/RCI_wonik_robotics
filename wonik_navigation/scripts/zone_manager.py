@@ -9,7 +9,10 @@ Topics
   ~current_zone_name (std_msgs/String) zone name, or "none"
   ~markers           (visualization_msgs/MarkerArray, latched) the polygons for RViz
 """
-import rospy
+import rclpy
+from rclpy.time import Time
+from rclpy.qos import qos_profile_sensor_data
+from wonik_navigation.ros_node import ManagedNode, latched_qos, spin_node
 import tf2_ros
 from geometry_msgs.msg import Point
 from std_msgs.msg import String
@@ -20,24 +23,25 @@ from wonik_navigation.zones import load_zones, zone_at
 COLORS = {"avoid": (1.0, 0.6, 0.0), "stop": (0.9, 0.1, 0.1)}
 
 
-class ZoneManager:
+class ZoneManager(ManagedNode):
     def __init__(self):
-        self.frame, self.zones = load_zones(rospy.get_param("~zones"))
-        self.base_frame = rospy.get_param("~base_frame", "base_footprint")
-        self.tf = tf2_ros.Buffer()
-        tf2_ros.TransformListener(self.tf)
-        self.type_pub = rospy.Publisher("current_zone", String, queue_size=1)
-        self.name_pub = rospy.Publisher("~current_zone_name", String, queue_size=1)
-        self.marker_pub = rospy.Publisher("~markers", MarkerArray, queue_size=1, latch=True)
+        super().__init__("zone_manager")
+        self.frame, self.zones = load_zones(self.param("~/zones"))
+        self.base_frame = self.param("~/base_frame", "base_footprint")
+        self.tf = tf2_ros.Buffer(node=self)
+        tf2_ros.TransformListener(self.tf, self)
+        self.type_pub = self.create_publisher(String, "current_zone", 1)
+        self.name_pub = self.create_publisher(String, "~/current_zone_name", 1)
+        self.marker_pub = self.create_publisher(MarkerArray, "~/markers", latched_qos())
         self.last = None
         self.publish_markers()
-        rospy.Timer(rospy.Duration(0.1), self.update)
-        rospy.loginfo("zone_manager: %d zones (%s)", len(self.zones),
+        self.create_timer(0.1, self.update)
+        self.info("zone_manager: %d zones (%s)", len(self.zones),
                       ", ".join("%s:%s" % (z["name"], z["type"]) for z in self.zones))
 
-    def update(self, _):
+    def update(self):
         try:
-            t = self.tf.lookup_transform(self.frame, self.base_frame, rospy.Time(0))
+            t = self.tf.lookup_transform(self.frame, self.base_frame, Time())
         except tf2_ros.TransformException:
             return
         z = zone_at(t.transform.translation.x, t.transform.translation.y, self.zones)
@@ -45,7 +49,7 @@ class ZoneManager:
         self.type_pub.publish(String(data=ztype))
         self.name_pub.publish(String(data=name))
         if name != self.last:
-            rospy.loginfo("zone_manager: entered %s (%s)", name, ztype)
+            self.info("zone_manager: entered %s (%s)", name, ztype)
             self.last = name
 
     def publish_markers(self):
@@ -58,12 +62,10 @@ class ZoneManager:
             mk.color.r, mk.color.g, mk.color.b = COLORS.get(z["type"], (0.5, 0.5, 0.5))
             mk.color.a = 1.0
             mk.pose.orientation.w = 1.0
-            mk.points = [Point(x, y, 0.02) for x, y in z["polygon"] + z["polygon"][:1]]
+            mk.points = [Point(x=float(x), y=float(y), z=0.02) for x, y in z["polygon"] + z["polygon"][:1]]
             arr.markers.append(mk)
         self.marker_pub.publish(arr)
 
 
 if __name__ == "__main__":
-    rospy.init_node("zone_manager")
-    ZoneManager()
-    rospy.spin()
+    spin_node(ZoneManager)

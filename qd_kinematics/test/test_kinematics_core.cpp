@@ -1,12 +1,14 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <random>
 #include <vector>
 
 #include "qd_kinematics/kinematics_model.hpp"
 #include "qd_kinematics/odometry_integrator.hpp"
+#include "qd_kinematics/stamp_monitor.hpp"
 #include "qd_kinematics/steer_drive_controller.hpp"
 
 using namespace qd_kinematics;
@@ -281,4 +283,258 @@ TEST(OdometryIntegrator, SkipsGapsAndStaleStamps)
     EXPECT_FALSE(odom.update({1.0, 0.0, 0.0}, 0.4)); // stale
     EXPECT_TRUE(odom.update({1.0, 0.0, 0.0}, 0.55));
     EXPECT_NEAR(odom.pose().x, 0.05, 1e-12);
+}
+
+// ---- Start-up supervision and faults ----
+
+namespace
+{
+
+// Steering follows the command; drive i turns only if responds[i] (otherwise it measures 0).
+struct PartialPlant
+{
+    PartialPlant(std::shared_ptr<const KinematicsModel> model, std::vector<bool> responds_in)
+        : ctrl(model, ControllerParams{}), state(model->numModules()), responds(std::move(responds_in))
+    {
+    }
+
+    void step(const Twist2D &cmd, double dt)
+    {
+        ctrl.update(cmd, state, dt, command);
+        for (size_t i = 0; i < state.size(); ++i)
+        {
+            state[i].angle = command[i].angle;
+            state[i].speed = responds[i] ? command[i].speed : 0.0;
+        }
+    }
+
+    SteerDriveController::Mode mode() const
+    {
+        return ctrl.debugState().mode;
+    }
+
+    SteerDriveController ctrl;
+    std::vector<ModuleState> state;
+    std::vector<ModuleState> command;
+    std::vector<bool> responds;
+};
+
+std::shared_ptr<SwerveKinematics> cobotV2()
+{
+    return std::make_shared<SwerveKinematics>(std::vector<ModulePosition>{{0.1975, -0.13}, {-0.1975, 0.13}});
+}
+
+// Runs a sideways command (needs stop -> steer-align -> creep) for `seconds`; returns whether DRIVE was
+// ever reached after the sequence had started.
+bool driveSideways(PartialPlant &plant, double seconds)
+{
+    bool started = false;
+    bool reached_drive = false;
+    for (int k = 0; k < static_cast<int>(seconds * 100); ++k)
+    {
+        plant.step({0.0, 0.2, 0.0}, 0.01);
+        started = started || plant.mode() != SteerDriveController::Mode::DRIVE;
+        reached_drive = reached_drive || (started && plant.mode() == SteerDriveController::Mode::DRIVE);
+    }
+    return reached_drive;
+}
+
+} // namespace
+
+TEST(SteerDriveController, CreepNeedsMeasuredWheelSpeed)
+{
+    // Steering works, the drive wheels never turn: the commanded creep speed converges, but that must
+    // not count as a successful start.
+    PartialPlant plant(cobotV2(), {false, false});
+    EXPECT_FALSE(driveSideways(plant, 15.0));
+    EXPECT_EQ(plant.mode(), SteerDriveController::Mode::FAULT);
+    EXPECT_TRUE(plant.ctrl.faulted());
+    EXPECT_NE(plant.ctrl.faultReason().find("creep"), std::string::npos) << plant.ctrl.faultReason();
+    EXPECT_EQ(plant.ctrl.debugState().start_attempts, ControllerParams{}.max_start_attempts);
+    for (const auto &c : plant.command)
+    {
+        EXPECT_EQ(c.speed, 0.0);
+    }
+}
+
+TEST(SteerDriveController, OneModuleNotDrivingFaults)
+{
+    PartialPlant plant(cobotV2(), {true, false});
+    EXPECT_FALSE(driveSideways(plant, 15.0));
+    EXPECT_EQ(plant.mode(), SteerDriveController::Mode::FAULT);
+}
+
+TEST(SteerDriveController, WheelStallInDriveFaults)
+{
+    PartialPlant plant(cobotV2(), {true, true});
+    EXPECT_TRUE(driveSideways(plant, 6.0));
+    ASSERT_EQ(plant.mode(), SteerDriveController::Mode::DRIVE);
+
+    plant.responds[1] = false; // rear drive stalls while driving
+    double fault_after = -1.0;
+    for (int k = 0; k < 300 && fault_after < 0.0; ++k)
+    {
+        plant.step({0.0, 0.2, 0.0}, 0.01);
+        if (plant.ctrl.faulted())
+        {
+            fault_after = (k + 1) * 0.01;
+        }
+    }
+    ASSERT_GT(fault_after, 0.0);
+    EXPECT_LT(fault_after, ControllerParams{}.drive_fault_time + 0.5);
+    for (int k = 0; k < 300; ++k)
+    {
+        plant.step({0.0, 0.2, 0.0}, 0.01);
+    }
+    EXPECT_EQ(plant.command[0].speed, 0.0); // decelerated to zero at linear_dec
+    EXPECT_EQ(plant.command[1].speed, 0.0);
+}
+
+TEST(SteerDriveController, FaultIsLatchedUntilCleared)
+{
+    PartialPlant plant(cobotV2(), {false, false});
+    driveSideways(plant, 15.0);
+    ASSERT_TRUE(plant.ctrl.faulted());
+
+    // New commands, a zero command and a reset() do not clear it; the wheels stay commanded to zero.
+    plant.responds = {true, true};
+    for (int k = 0; k < 500; ++k)
+    {
+        plant.step({0.3, 0.0, 0.0}, 0.01);
+        ASSERT_TRUE(plant.ctrl.faulted());
+        ASSERT_EQ(plant.command[0].speed, 0.0);
+    }
+    plant.step({0.0, 0.0, 0.0}, 0.01);
+    plant.ctrl.reset();
+    plant.step({0.3, 0.0, 0.0}, 0.01);
+    EXPECT_TRUE(plant.ctrl.faulted());
+
+    // Only clearFault() does; with working drives the robot then drives normally.
+    plant.ctrl.clearFault();
+    EXPECT_FALSE(plant.ctrl.faulted());
+    driveSideways(plant, 6.0);
+    EXPECT_EQ(plant.mode(), SteerDriveController::Mode::DRIVE);
+    EXPECT_NEAR(plant.state[0].speed, plant.ctrl.debugState().v_target[0], 1e-9);
+    EXPECT_GT(std::abs(plant.state[0].speed), 0.1);
+}
+
+TEST(SteerDriveController, RestartAfterResetChecksMeasuredSpeed)
+{
+    // Driving straight, then a feedback dropout (reset()); the wheels still point the right way but the
+    // drives no longer turn. The restart must creep and verify, not ramp straight to the command.
+    PartialPlant plant(cobotV2(), {true, true});
+    for (int k = 0; k < 600; ++k)
+    {
+        plant.step({0.4, 0.0, 0.0}, 0.01);
+    }
+    ASSERT_EQ(plant.mode(), SteerDriveController::Mode::DRIVE);
+    for (int k = 0; k < 300; ++k) // stop
+    {
+        plant.step({0.0, 0.0, 0.0}, 0.01);
+    }
+    plant.ctrl.reset();
+    plant.responds = {false, false};
+    double max_cmd = 0.0;
+    bool drive = false;
+    for (int k = 0; k < 1500; ++k)
+    {
+        plant.step({0.4, 0.0, 0.0}, 0.01);
+        max_cmd = std::max(max_cmd, std::abs(plant.command[0].speed));
+        drive = drive || plant.mode() == SteerDriveController::Mode::DRIVE;
+    }
+    EXPECT_FALSE(drive);
+    EXPECT_LE(max_cmd, ControllerParams{}.creep_speed_max + 1e-9);
+    EXPECT_TRUE(plant.ctrl.faulted());
+
+    // the same after clearing the fault with the drives still dead
+    plant.ctrl.clearFault();
+    max_cmd = 0.0;
+    drive = false;
+    for (int k = 0; k < 1500; ++k)
+    {
+        plant.step({0.4, 0.0, 0.0}, 0.01);
+        max_cmd = std::max(max_cmd, std::abs(plant.command[0].speed));
+        drive = drive || plant.mode() == SteerDriveController::Mode::DRIVE;
+    }
+    EXPECT_FALSE(drive);
+    EXPECT_LE(max_cmd, ControllerParams{}.creep_speed_max + 1e-9);
+    EXPECT_TRUE(plant.ctrl.faulted());
+
+    // with working drives the verified restart reaches DRIVE
+    plant.ctrl.clearFault();
+    plant.responds = {true, true};
+    for (int k = 0; k < 600; ++k)
+    {
+        plant.step({0.4, 0.0, 0.0}, 0.01);
+    }
+    EXPECT_EQ(plant.mode(), SteerDriveController::Mode::DRIVE);
+    EXPECT_GT(plant.command[0].speed, 0.3);
+}
+
+TEST(SteerDriveController, NonFiniteInputCommandsZeroSpeed)
+{
+    PartialPlant plant(cobotV2(), {true, true});
+    for (int k = 0; k < 500; ++k)
+    {
+        plant.step({0.3, 0.0, 0.0}, 0.01);
+    }
+    ASSERT_GT(plant.command[0].speed, 0.1);
+
+    // A NaN command is a stop command: the speed ramps down, every output stays finite.
+    for (int k = 0; k < 300; ++k)
+    {
+        plant.step({std::nan(""), 0.0, 0.0}, 0.01);
+        for (const auto &c : plant.command)
+        {
+            ASSERT_TRUE(std::isfinite(c.angle) && std::isfinite(c.speed));
+        }
+    }
+    EXPECT_EQ(plant.command[0].speed, 0.0);
+
+    // A non-finite measurement: zero speed immediately, steering held, nothing NaN.
+    plant.state[1].speed = std::numeric_limits<double>::infinity();
+    std::vector<ModuleState> command;
+    plant.ctrl.update({0.3, 0.0, 0.0}, plant.state, 0.01, command);
+    for (const auto &c : command)
+    {
+        EXPECT_EQ(c.speed, 0.0);
+        EXPECT_TRUE(std::isfinite(c.angle));
+    }
+}
+
+TEST(StampMonitor, ClassifiesFeedbackStamps)
+{
+    using R = StampMonitor::Result;
+    StampMonitor m(0.1);
+    EXPECT_EQ(m.check(10.00), R::FIRST);
+    EXPECT_EQ(m.check(10.01), R::OK);
+    EXPECT_EQ(m.check(10.01), R::DUPLICATE);    // dropped, not re-stamped
+    EXPECT_EQ(m.check(10.005), R::OUT_OF_ORDER); // late sample dropped
+    EXPECT_DOUBLE_EQ(m.last(), 10.01);           // the last accepted stamp is unchanged
+    EXPECT_EQ(m.check(10.02), R::OK);
+    EXPECT_EQ(m.check(10.50), R::GAP);           // accepted, but not integrated across
+    EXPECT_EQ(m.check(8.50), R::OUT_OF_ORDER);   // 2 s late: still a late sample, not a clock reset
+    EXPECT_DOUBLE_EQ(m.last(), 10.50);
+    m.reset();                                   // the owner saw its own clock go back
+    EXPECT_EQ(m.check(2.00), R::FIRST);
+    EXPECT_EQ(m.check(2.01), R::OK);
+    EXPECT_EQ(m.check(std::nan("")), R::INVALID);
+    EXPECT_EQ(m.check(0.0), R::INVALID);
+    EXPECT_EQ(m.check(-1.0), R::INVALID);
+    EXPECT_EQ(m.duplicates, 1u);
+    EXPECT_EQ(m.out_of_order, 2u);
+    EXPECT_EQ(m.gaps, 1u);
+    EXPECT_EQ(m.invalid, 3u);
+}
+
+TEST(OdometryIntegrator, IgnoresNonFiniteInput)
+{
+    OdometryIntegrator odom;
+    odom.update({1.0, 0.0, 0.0}, 0.00);
+    EXPECT_TRUE(odom.update({1.0, 0.0, 0.0}, 0.01));
+    EXPECT_FALSE(odom.update({std::nan(""), 0.0, 0.0}, 0.02));
+    EXPECT_FALSE(odom.update({1.0, 0.0, std::numeric_limits<double>::infinity()}, 0.03));
+    EXPECT_TRUE(odom.update({1.0, 0.0, 0.0}, 0.04));
+    EXPECT_TRUE(std::isfinite(odom.pose().x) && std::isfinite(odom.pose().yaw));
+    EXPECT_NEAR(odom.pose().x, 0.04, 1e-12);
 }
