@@ -17,7 +17,8 @@ Clone this repository into the `src/` folder of a catkin workspace.
 | `wonik_cobot_v2_description` | URDF/xacro of cobot_v2 (QD #2 type) without the arm. Meshes are converted from Wonik's STEP; geometry (drive unit and omni wheel positions, wheel size, LiDAR mount) is in `config/geometry.yaml`. Gazebo-only tags are in `urdf/wonik_cobot_v2.gazebo.xacro`. |
 | `wonik_cobot_v2_bringup` | `base.launch`: robot model, controller configuration and kinematics node, shared by the real robot and the simulation. |
 | `wonik_gazebo` | Simulation only: `cobot_v2.launch` (world, robot, controllers, RViz), the `qd_kinematic_base` Gazebo plugin and worlds (`empty`, `wonik_hall`: a 16 m × 10 m test hall with a central island for a U-shaped route). |
-| `wonik_navigation` | 2D SLAM on the 3D LiDAR: `/points` → `pointcloud_to_laserscan` → `/scan` → `slam_toolbox` (`mapping.launch`), saved maps in `maps/`, AMCL localization on a saved map (`localization.launch`). |
+| `wonik_navigation` | 2D SLAM on the 3D LiDAR: `/points` → `pointcloud_to_laserscan` → `/scan` → `slam_toolbox` (`mapping.launch`), saved maps in `maps/`, AMCL localization on a saved map (`localization.launch`). Route following with move_base_flex (`navigation.launch`) and the route supervisor (`route.launch`, routes in `config/routes/`), which can switch controllers mid-route. |
+| `stop_go_local_planner` | Stop-and-go route follower (nav_core plugin, structured after `neo_local_planner`): straight segments, in-place rotation at corners, pure pursuit, 1.0 m/s, no obstacle avoidance. |
 
 The robot-side packages talk to the drive units through ros_control (steer joints: position, drive joints: velocity) and `joint_states`, so on the real robot only the Gazebo layer is replaced by the drive unit driver.
 
@@ -38,13 +39,19 @@ cobot_v2 in Gazebo, driven with `teleop_twist_keyboard` (GIFs are sped up 2-3x).
 |:---:|:---:|:---:|
 | <img src="docs/images/wonik_hall_gazebo.png" width="280"> | <img src="docs/gifs/cobot_v2_mapping.gif" width="280"> | <img src="docs/gifs/cobot_v2_localization.gif" width="280"> |
 
+Stop-and-go along the U route (`stop_go` controller, AMCL on the saved map): straight legs at up to 1.0 m/s, a stop and an in-place turn at every waypoint. The right plot is a run where the controller is switched mid-route to a 0.3 m/s variant (`stop_go_slow`) and back; the robot changes speed without stopping.
+
+| U route (5x speed) | Speed with mid-route controller switches |
+|:---:|:---:|
+| <img src="docs/gifs/cobot_v2_stop_go_route.gif" width="420"> | <img src="docs/images/stop_go_controller_switch.png" width="420"> |
+
 ## Quick start
 ```bash
-sudo apt install ros-noetic-desktop-full ros-noetic-ros-controllers \
-  ros-noetic-velodyne-simulator ros-noetic-teleop-twist-keyboard
+sudo apt install ros-noetic-desktop-full python3-rosdep
 mkdir -p ~/catkin_ws/src && cd ~/catkin_ws/src
 git clone https://github.com/RCILab/RCI_wonik_robotics.git
 cd ~/catkin_ws
+rosdep install --from-paths src --ignore-src -y
 catkin_make
 source devel/setup.bash
 roslaunch wonik_gazebo cobot_v2.launch          # sim_drive:=physics, gui:=false rviz:=false (headless)
@@ -62,6 +69,14 @@ roslaunch wonik_navigation mapping.launch                # another terminal; dri
 rosrun map_server map_saver -f <dir>/wonik_hall          # when the map is complete
 
 roslaunch wonik_navigation localization.launch           # instead of mapping: AMCL on maps/wonik_hall
+```
+
+Stop-and-go along the U route:
+```bash
+roslaunch wonik_gazebo cobot_v2.launch world:=wonik_hall
+roslaunch wonik_navigation navigation.launch             # AMCL + move_base_flex
+roslaunch wonik_navigation route.launch                  # sends config/routes/wonik_hall_u.yaml
+rostopic pub -1 /route_supervisor/controller std_msgs/String stop_go_slow   # switch controllers mid-route
 ```
 
 Unit tests: `catkin_make run_tests_qd_kinematics`.

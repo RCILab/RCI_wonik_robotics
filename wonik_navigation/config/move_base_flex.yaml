@@ -1,0 +1,29 @@
+# move_base_flex (mbf_costmap_nav). All controllers are loaded at start-up; each ExePath goal names
+# the one to use, so the route supervisor can switch controllers mid-route by resending the rest of
+# the route.
+global_frame: map
+robot_frame: base_footprint
+odom_topic: odom
+tf_timeout: 1.0
+
+controller_frequency: 20.0
+controller_patience: 5.0
+controller_max_retries: 1
+# 0 = off: a robot held still on purpose (e.g. by an obstacle stop) must not count as oscillating
+oscillation_timeout: 0.0
+oscillation_distance: 0.2
+
+planner_frequency: 0.0
+planner_patience: 5.0
+recovery_enabled: false
+recovery_behaviors: []
+
+controllers:
+  - name: stop_go
+    type: stop_go_local_planner/StopGoLocalPlanner
+  - name: stop_go_slow
+    type: stop_go_local_planner/StopGoLocalPlanner
+
+planners:
+  - name: global_planner
+    type: global_planner/GlobalPlanner

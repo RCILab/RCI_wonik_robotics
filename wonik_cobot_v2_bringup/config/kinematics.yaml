@@ -7,8 +7,9 @@ odom_frame: odom
 base_frame: base_footprint
 publish_tf: true
 
-linear_acc: 0.10
-linear_dec: 0.25
+# Placeholder limits until the drive unit spec arrives (the route controllers stay below these).
+linear_acc: 0.4
+linear_dec: 0.6
 max_steer_vel: 1.5
 # Steer joints are continuous in simulation, so the +-(90 + 10) deg band is reachable.
 steer_hysteresis_deg: 10.0

@@ -29,6 +29,25 @@ Visualization Manager:
       Color Transformer: FlatColor
       Color: 255; 0; 0
       Decay Time: 0
+    - Class: rviz/Path
+      Name: Route
+      Enabled: true
+      Topic: /route_supervisor/route_path
+      Color: 0; 120; 255
+      Line Style: Billboards
+      Line Width: 0.04
+    - Class: rviz/Path
+      Name: Remaining route (stop_go)
+      Enabled: true
+      Topic: /move_base_flex/stop_go/local_plan
+      Color: 255; 170; 0
+      Line Style: Billboards
+      Line Width: 0.03
+    - Class: rviz/Map
+      Name: Local costmap
+      Enabled: false
+      Topic: /move_base_flex/local_costmap/costmap
+      Color Scheme: costmap
     - Class: rviz/Odometry
       Name: Odometry
       Enabled: false

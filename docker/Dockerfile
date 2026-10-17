@@ -20,6 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-noetic-amcl \
  && rm -rf /var/lib/apt/lists/*
 
+# Route following: move_base_flex (controllers selected per goal) and a global planner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ros-noetic-move-base-flex \
+      ros-noetic-global-planner \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /catkin_ws/src \
  && echo "source /opt/ros/noetic/setup.bash" >> /root/.bashrc \
  && echo "[ -f /catkin_ws/devel/setup.bash ] && source /catkin_ws/devel/setup.bash" >> /root/.bashrc

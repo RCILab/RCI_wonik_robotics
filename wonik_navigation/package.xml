@@ -2,7 +2,7 @@
 <package format="2">
   <name>wonik_navigation</name>
   <version>0.1.0</version>
-  <description>2D SLAM, localization and navigation configuration for the Wonik AGVs (real robot and simulation)</description>
+  <description>2D SLAM, localization and route following for the Wonik AGVs (real robot and simulation)</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
 
@@ -12,5 +12,14 @@
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>map_server</exec_depend>
   <exec_depend>amcl</exec_depend>
+  <exec_depend>mbf_costmap_nav</exec_depend>
+  <exec_depend>mbf_msgs</exec_depend>
+  <exec_depend>global_planner</exec_depend>
+  <exec_depend>stop_go_local_planner</exec_depend>
+  <exec_depend>actionlib</exec_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>rviz</exec_depend>
 </package>

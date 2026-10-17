@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Localization (map_server + AMCL) and move_base_flex with the route controllers.
+       roslaunch wonik_navigation navigation.launch [map:=wonik_hall]
+       roslaunch wonik_navigation route.launch [route:=wonik_hall_u]      (another terminal) -->
+<launch>
+  <arg name="robot" default="cobot_v2"/>
+  <arg name="map" default="wonik_hall"/>
+  <arg name="x" default="0.0"/>
+  <arg name="y" default="0.0"/>
+  <arg name="yaw" default="0.0"/>
+  <arg name="rviz" default="true"/>
+
+  <include file="$(find wonik_navigation)/launch/localization.launch">
+    <arg name="robot" value="$(arg robot)"/>
+    <arg name="map" value="$(arg map)"/>
+    <arg name="x" value="$(arg x)"/>
+    <arg name="y" value="$(arg y)"/>
+    <arg name="yaw" value="$(arg yaw)"/>
+    <arg name="rviz" value="false"/>
+  </include>
+
+  <node pkg="mbf_costmap_nav" type="mbf_costmap_nav" name="move_base_flex" output="screen">
+    <rosparam file="$(find wonik_navigation)/config/move_base_flex.yaml" command="load"/>
+    <rosparam file="$(find wonik_navigation)/config/costmaps.yaml" command="load"/>
+    <rosparam file="$(find wonik_navigation)/config/$(arg robot)/footprint.yaml" command="load"/>
+    <rosparam file="$(find wonik_navigation)/config/$(arg robot)/stop_go.yaml" command="load"/>
+  </node>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz_navigation"
+        args="-d $(find wonik_navigation)/rviz/navigation.rviz"/>
+</launch>

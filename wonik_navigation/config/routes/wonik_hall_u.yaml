@@ -1,0 +1,8 @@
+# U-shaped (ㄷ) route around the central island of wonik_hall, in the map frame (the map origin is
+# the spawn pose). The robot stops and turns in place at every waypoint.
+frame_id: map
+waypoints:
+  - [0.0, 0.0]
+  - [12.0, 0.0]
+  - [12.0, 6.0]
+  - [0.0, 6.0]
