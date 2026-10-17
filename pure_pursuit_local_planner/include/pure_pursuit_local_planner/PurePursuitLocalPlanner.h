@@ -39,6 +39,7 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
   private:
     void odomCallback(const nav_msgs::Odometry::ConstPtr &msg);
     bool odometryFresh(const ros::Time &now) const;
+    void setBlocked(bool blocked); // publishes ~blocked when it changes
     bool commandIsFree(const geometry_msgs::Twist &cmd, double planned_speed, double target_yawrate,
                        double rotation_left, const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot,
                        double yaw);
@@ -52,6 +53,7 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     nav_msgs::Odometry::ConstPtr m_odometry;
     ros::Subscriber m_odom_sub;
     ros::Publisher m_local_plan_pub;
+    ros::Publisher m_blocked_pub; // ~blocked (latched): the path or the motion ahead is not free, waiting
 
     std::string m_global_frame = "map";
     std::string m_local_frame = "odom";
@@ -66,6 +68,7 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     double m_max_curve_vel = 0;       // [rad/s] yaw rate limit in curves, caps the speed
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
     double m_low_pass_gain = 0;       // curvature low pass while translating (1 = off)
+    double m_max_curvature_rate = 0;  // [1/(m s)] rate limit of the curvature (steering) while translating
     double m_min_stop_dist = 0;       // [m] footprint check reaches this far beyond the braking distance
     double m_path_heading_dist = 0;   // [m] path-ahead check: heading toward the path point this far on
     double m_goal_tune_time = 0;      // [s]
@@ -88,6 +91,7 @@ class PurePursuitLocalPlanner : public nav_core::BaseLocalPlanner
     ros::Time m_first_goal_reached_time;
     bool m_is_goal_reached = false;
     bool m_blocked = false;
+    bool m_blocked_published = false;
     geometry_msgs::Twist m_last_cmd_vel;
     double m_curvature = 0;        // [1/m] filtered curvature of the last translating step
     bool m_have_curvature = false; // m_curvature is the steering the base is driving with

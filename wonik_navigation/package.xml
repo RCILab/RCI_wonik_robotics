@@ -15,6 +15,7 @@
   <exec_depend>map_server</exec_depend>
   <exec_depend>amcl</exec_depend>
   <exec_depend>mbf_costmap_nav</exec_depend>
+  <exec_depend>map_msgs</exec_depend>
   <exec_depend>mbf_msgs</exec_depend>
   <exec_depend>global_planner</exec_depend>
   <exec_depend>stop_go_local_planner</exec_depend>

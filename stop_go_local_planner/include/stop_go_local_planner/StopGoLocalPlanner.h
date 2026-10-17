@@ -71,6 +71,7 @@ class StopGoLocalPlanner : public nav_core::BaseLocalPlanner
     double m_corner_angle = 0;    // [rad] heading change that splits the plan into segments
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
     double m_low_pass_gain = 0;   // curvature low pass while translating (1 = off)
+    double m_max_curvature_rate = 0; // [1/(m s)] rate limit of the curvature (steering) while translating
     double m_goal_tune_time = 0;  // [s] stay within tolerance this long before the goal counts
     bool m_holonomic = true;      // the base can move sideways (ADJUSTING; false: along its heading only)
     double m_adjust_max_dist = 0; // [m] larger misses of a segment end are approached again as a segment

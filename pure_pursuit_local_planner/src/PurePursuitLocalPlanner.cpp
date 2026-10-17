@@ -7,6 +7,7 @@
 #include <base_local_planner/goal_functions.h>
 #include <local_planner_checks/footprint_checker.h>
 #include <nav_msgs/Path.h>
+#include <std_msgs/Bool.h>
 #include <pluginlib/class_list_macros.h>
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
@@ -214,13 +215,15 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_
         const double dist_sq = local_target.x() * local_target.x() + local_target.y() * local_target.y();
         const double pursuit_curvature = dist_sq > 1e-6 ? 2 * local_target.y() / dist_sq : 0;
 
-        // The drive units' steering angles follow the curvature, not the yaw rate: low pass the curvature,
-        // so the steering moves smoothly also while the speed changes (a steering step makes the base stop,
-        // re-steer and start again).
+        // The drive units' steering angles follow the curvature, not the yaw rate: low pass the curvature and
+        // limit its rate of change (max_curvature_rate), so the steering moves smoothly also while the speed
+        // changes and when a new path is handed over. A steering step makes the base stop, re-steer and
+        // start again.
         double curvature = pursuit_curvature;
         if (m_have_curvature)
         {
             curvature = curvature * m_low_pass_gain + m_curvature * (1 - m_low_pass_gain);
+            curvature = slew(m_curvature, curvature, m_max_curvature_rate * dt);
         }
         m_curvature = curvature;
         m_have_curvature = true;
@@ -354,15 +357,27 @@ bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::Twist &cmd, dou
                            checks::toString(result.collision), result.distance,
                            angles::to_degrees(std::fabs(result.angle)));
         }
-        m_blocked = true;
+        setBlocked(true);
         return false;
     }
     if (m_blocked)
     {
         ROS_INFO_NAMED("PurePursuitLocalPlanner", "the way is clear again");
     }
-    m_blocked = false;
+    setBlocked(false);
     return true;
+}
+
+void PurePursuitLocalPlanner::setBlocked(bool blocked)
+{
+    if (blocked != m_blocked || !m_blocked_published)
+    {
+        std_msgs::Bool msg;
+        msg.data = blocked;
+        m_blocked_pub.publish(msg);
+        m_blocked_published = true;
+    }
+    m_blocked = blocked;
 }
 
 bool PurePursuitLocalPlanner::isGoalReached()
@@ -417,7 +432,7 @@ bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::PoseStamp
     m_last_time = ros::Time::now();
     m_first_goal_reached_time = ros::Time();
     m_is_goal_reached = false;
-    m_blocked = false;
+    setBlocked(false);
     // A replanned path while driving continues from the current motion: keep translating unless the
     // new path starts far off the heading (decided in the next control step).
     m_last_cmd_vel = geometry_msgs::Twist();
@@ -461,6 +476,7 @@ void PurePursuitLocalPlanner::initialize(std::string name, tf2_ros::Buffer *tf, 
     m_max_curve_vel = private_nh.param<double>("max_curve_vel", 0.3);
     m_trans_acc_lim_theta = private_nh.param<double>("trans_acc_lim_theta", 0.4);
     m_low_pass_gain = private_nh.param<double>("low_pass_gain", 0.5);
+    m_max_curvature_rate = private_nh.param<double>("max_curvature_rate", 1.0);
     m_min_stop_dist = private_nh.param<double>("min_stop_dist", 0.3);
     m_path_heading_dist = private_nh.param<double>("path_heading_dist", 0.3);
     m_odom_timeout = private_nh.param<double>("odom_timeout", 0.5);
@@ -476,6 +492,7 @@ void PurePursuitLocalPlanner::initialize(std::string name, tf2_ros::Buffer *tf, 
 
     m_odom_sub = nh.subscribe(odom_topic, 1, &PurePursuitLocalPlanner::odomCallback, this);
     m_local_plan_pub = private_nh.advertise<nav_msgs::Path>("local_plan", 1);
+    m_blocked_pub = private_nh.advertise<std_msgs::Bool>("blocked", 1, true);
 
     ROS_INFO_NAMED("PurePursuitLocalPlanner", "base_frame=%s, local_frame=%s, max_vel_x=%.2f, max_curve_vel=%.2f",
                    m_base_frame.c_str(), m_local_frame.c_str(), m_limits.max_vel_x, m_max_curve_vel);

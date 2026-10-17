@@ -120,13 +120,17 @@ Shared code in `local_planner_checks` (the same functions in both planners and i
 States on `/route_supervisor/state`: FOLLOW, AVOID_PREP, AVOID, AVOID_HOLD, DONE (see
 `scripts/route_supervisor.py`).
 
-- Entering avoidance (zone or mode): AVOID_PREP while the detour is planned. The route goal keeps
-  running behind the closed gate, so the robot stops in front of an obstacle. Planning failures and
-  timeouts (`plan_timeout`) are retried every `replan_period`; a detour goal that move_base_flex rejects
-  or aborts before it runs restarts the route goal.
-- AVOID only once move_base_flex reports feedback from the detour goal. A failed replan keeps the
-  current detour. A detour that ends without success → AVOID_HOLD: the robot stands, the gate is closed,
-  the detour is replanned until one runs.
+- Entering avoidance: mode avoid, or in an avoid zone when the global costmap shows an obstacle on the
+  route ahead within the zone (without costmap data: anywhere in an avoid zone). AVOID_PREP while the
+  detour is planned. The route goal keeps running behind the closed gate, so the robot stops in front of
+  an obstacle. Planning failures and timeouts (`plan_timeout`) are retried every `replan_period`; a
+  detour goal that move_base_flex rejects or aborts before it runs restarts the route goal.
+- AVOID only once move_base_flex reports feedback from the detour goal. The detour is replanned only
+  while the avoid controller reports its way blocked (a new path changes the steering, and the base
+  stops to re-steer for a step); a failed replan keeps the current detour. The detour rejoins the route
+  `rejoin_margin` past the obstacle, and the route controller takes over only with the robot on the
+  route and heading along it. A detour that ends without success → AVOID_HOLD: the robot stands, the
+  gate is closed, the detour is replanned until one runs.
 - Results and feedback of replaced goals are ignored. Zone data older than `zone_timeout` counts as no
   zone.
 

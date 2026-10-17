@@ -19,6 +19,7 @@ install(DIRECTORY config launch maps rviz
 if(CATKIN_ENABLE_TESTING)
   find_package(rostest REQUIRED)
   catkin_add_nosetests(test/test_safety.py)
+  catkin_add_nosetests(test/test_route.py)
   add_rostest(test/gate_timeouts.test)
   add_rostest(test/supervisor_gate_timeout.test)
   add_rostest(test/supervisor_gate_fail.test)

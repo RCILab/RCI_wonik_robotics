@@ -9,6 +9,10 @@ avoid:
   acc_lim_theta: 0.6
   trans_acc_lim_theta: 0.4
   low_pass_gain: 0.5
+  # Curvature rate limit: the base stops and re-steers when a steering target jumps by more than
+  # 2 deg (qd_kinematics), also when a new path is handed over while driving. drive units 0.2 m from the turning centre: 2.0 /(m s) moves their steering by
+  # under 1.2 deg per 50 ms control step
+  max_curvature_rate: 2.0
   lookahead_dist: 1.0
   lookahead_time: 0.5
   start_yaw_error: 0.7       # rotate in place first if the path starts > 40 deg off (> 80 deg while moving)

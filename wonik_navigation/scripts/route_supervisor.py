@@ -6,20 +6,30 @@ topic.
 States (published on ~state at 10 Hz; cmd_vel_gate opens its obstacle stop only in AVOID):
   FOLLOW      the route with the route controller (stop_go: stops and turns at waypoints; the gate stops
               the robot for obstacles)
-  AVOID_PREP  avoidance wanted (avoid zone or mode avoid) but no detour running yet: a detour to the
-              route point just past the zone exit is being planned. The route goal keeps running behind
+  AVOID_PREP  avoidance wanted but no detour running yet: a detour to the rejoin point (below) is being
+              planned. Avoidance is wanted in mode avoid, and in an avoid zone (mode auto) when the global
+              costmap shows an obstacle on the route ahead within the zone (without a costmap: always in
+              an avoid zone). The route goal keeps running behind
               the closed gate, so the robot stops in front of an obstacle instead of driving into it.
               Planning failures and timeouts are retried every replan_period; a detour goal that
               move_base_flex rejects or aborts before it runs restarts the route goal (still AVOID_PREP).
   AVOID       a detour goal is confirmed running with the avoid controller (move_base_flex feedback
-              from that goal). Replanned every replan_period; a failed replan keeps the current detour.
-              At the handover point (halfway along the route tail appended to the detour), or when the
-              detour succeeds, the robot rejoins the route in FOLLOW.
+              from that goal). Replanned only while the avoid controller reports its way blocked (its
+              ~blocked topic) for replan_period: a new path for a robot that is driving fine would change
+              its steering for nothing. A failed replan keeps the current detour. At the handover point
+              (halfway along the route tail appended to the detour), or when the detour succeeds, the
+              robot rejoins the route in FOLLOW. The route controller takes over only with the robot on the
+              route and heading along it (handover_yaw_tolerance), so it does not stop to turn first.
   AVOID_HOLD  a running detour ended without success: the robot stands (no goal, gate closed) and the
               detour is replanned every replan_period until one runs (AVOID) or the mode is stop_go.
   DONE        the route goal finished (succeeded or failed); the node exits.
 Results and feedback of goals that were replaced are ignored. A zone older than zone_timeout counts as
 "none" (no avoidance is started on stale zone data; a confirmed detour is finished).
+
+Rejoin point: the detour ends rejoin_margin past the last route point in the avoid zone ahead that has an
+obstacle within rejoin_clear_radius on the global costmap, i.e. right after the obstacle; if the costmap
+shows none (or is missing), rejoin_margin past the zone exit. A replan may move it further, never back.
+With mode avoid the detour runs to the end of the route.
 
 Parameters
   ~route             route yaml (frame_id, waypoints: [[x, y], ...])
@@ -30,11 +40,20 @@ Parameters
   ~replan_period     [s] detour replanning period (default 1.0)
   ~plan_timeout      [s] a detour plan that takes longer is cancelled (default 2.0)
   ~zone_timeout      [s] (default 1.0)
-  ~rejoin_margin     [m] the detour reaches the route this far past the avoid zone exit (default 1.0)
-  ~rejoin_tail       [m] of route appended to the detour; the route controller takes over halfway
-                     along it, once the robot is back on the route line and heading (default 1.5)
+  ~rejoin_margin     [m] the detour reaches the route this far past the obstacle on it (or past the avoid
+                     zone exit, see above) (default 1.0)
+  ~rejoin_clear_radius [m] a route point with an obstacle cell this close is blocked (default 0.6: about
+                     half the body width plus a margin)
+  ~costmap           global costmap topic (default move_base_flex/global_costmap/costmap)
+  ~rejoin_tail       [m] of route appended to the detour; the route controller takes over from halfway
+                     along it, once the robot is back on the route line and heading (default 2.5)
+  ~handover_yaw_tolerance [rad] heading off the route at which the route controller may take over
+                     (default 0.17, below stop_go's start_yaw_error)
 Topics
   current_zone       (std_msgs/String, in)  from zone_manager
+  move_base_flex/<avoid_controller>/blocked (std_msgs/Bool, in) the avoid controller is waiting
+  <costmap>, <costmap>_updates (nav_msgs/OccupancyGrid, map_msgs/OccupancyGridUpdate, in): costmap_2d
+                     sends the whole grid once and then only the changed parts
   ~mode              (std_msgs/String, in)  auto (zones decide, default) | stop_go | avoid
   ~controller        (std_msgs/String, in)  route controller for the rest of the route
   ~active_controller (std_msgs/String, out, latched) controller of the goal move_base_flex runs
@@ -49,11 +68,13 @@ import rospy
 import tf2_ros
 import yaml
 from geometry_msgs.msg import PoseStamped
+from map_msgs.msg import OccupancyGridUpdate
 from mbf_msgs.msg import ExePathAction, ExePathGoal, ExePathResult, GetPathAction, GetPathGoal, GetPathResult
-from nav_msgs.msg import Path
-from std_msgs.msg import String
+from nav_msgs.msg import OccupancyGrid, Path
+from std_msgs.msg import Bool, String
 from tf.transformations import quaternion_from_euler
 
+from wonik_navigation.route import GridView, blocked_indices, last_in
 from wonik_navigation.zones import inside, load_zones
 
 SPACING = 0.05  # [m] between route poses
@@ -97,7 +118,9 @@ class RouteSupervisor:
         self.plan_timeout = rospy.get_param("~plan_timeout", 2.0)
         self.zone_timeout = rospy.get_param("~zone_timeout", 1.0)
         self.rejoin_margin = rospy.get_param("~rejoin_margin", 1.0)
-        self.rejoin_tail = rospy.get_param("~rejoin_tail", 1.5)
+        self.rejoin_clear_radius = rospy.get_param("~rejoin_clear_radius", 0.6)
+        self.rejoin_tail = rospy.get_param("~rejoin_tail", 2.5)
+        self.handover_yaw_tolerance = rospy.get_param("~handover_yaw_tolerance", 0.17)
 
         self.lock = threading.RLock()
         self.state = "FOLLOW"
@@ -111,6 +134,11 @@ class RouteSupervisor:
         self.goal_kind = None    # "route" | "detour"
         self.goal_controller = None
         self.goal_confirmed = False
+        self.points = [(p.pose.position.x, p.pose.position.y) for p in self.path.poses]
+        self.zone_points = [k for k, (x, y) in enumerate(self.points)
+                            if any(inside(x, y, z["polygon"]) for z in self.avoid_zones)]
+        self.blocked = None  # route indices in avoid zones with an obstacle on them (None: no costmap yet)
+        self.avoid_blocked = (False, None)  # (blocked, since)
         self.done = threading.Event()
 
         self.tf = tf2_ros.Buffer()
@@ -123,13 +151,23 @@ class RouteSupervisor:
         rospy.Subscriber("current_zone", String, self.on_zone, queue_size=1)
         rospy.Subscriber("~mode", String, self.on_mode)
         rospy.Subscriber("~controller", String, self.on_controller)
+        self.grid = None
+        costmap = rospy.get_param("~costmap", "move_base_flex/global_costmap/costmap")
+        rospy.Subscriber(costmap, OccupancyGrid, self.on_costmap, queue_size=1)
+        rospy.Subscriber(costmap + "_updates", OccupancyGridUpdate, self.on_costmap_update, queue_size=10)
+        rospy.Subscriber("move_base_flex/%s/blocked" % self.avoid_controller, Bool, self.on_avoid_blocked)
         # heartbeat: the gate trusts AVOID only while this keeps coming
         rospy.Timer(rospy.Duration(0.1), lambda _: self.state_pub.publish(String(data=self.state)))
 
     # ---- helpers ----
-    def robot_xy(self):
+    def robot_pose(self):
         t = self.tf.lookup_transform(self.path.header.frame_id, "base_footprint", rospy.Time(0), rospy.Duration(1.0))
-        return t.transform.translation.x, t.transform.translation.y
+        q = t.transform.rotation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        return t.transform.translation.x, t.transform.translation.y, yaw
+
+    def robot_xy(self):
+        return self.robot_pose()[:2]
 
     def robot_index(self, from_index):
         """Index of the route pose closest to the robot, searched forward from from_index."""
@@ -138,8 +176,8 @@ class RouteSupervisor:
         return min(range(from_index, len(poses)),
                    key=lambda i: (poses[i].pose.position.x - x) ** 2 + (poses[i].pose.position.y - y) ** 2)
 
-    def exit_index(self, index):
-        """First route index after the avoid zone around route index 'index', plus rejoin_margin."""
+    def zone_exit(self, index):
+        """First route index after the avoid zone around route index 'index'."""
         poses = self.path.poses
         zone = next((z for z in self.avoid_zones
                      if inside(poses[index].pose.position.x, poses[index].pose.position.y, z["polygon"])), None)
@@ -147,7 +185,23 @@ class RouteSupervisor:
         if zone is not None:
             while i < len(poses) - 1 and inside(poses[i].pose.position.x, poses[i].pose.position.y, zone["polygon"]):
                 i += 1
-        return min(i + int(round(self.rejoin_margin / SPACING)), len(poses) - 1)
+        return i
+
+    def rejoin_after(self, index):
+        """Route index the detour from route index 'index' rejoins at: rejoin_margin past the obstacle on the
+        route in the avoid zone, or past the zone exit when the costmap shows no obstacle on it."""
+        last = len(self.path.poses) - 1
+        if self.mode == "avoid":
+            return last
+        exit_index = self.zone_exit(index)
+        blocked = last_in(self.blocked or [], index, exit_index)
+        base = exit_index if blocked is None else blocked
+        return min(base + int(round(self.rejoin_margin / SPACING)), last)
+
+    def set_rejoin(self, index):
+        last = len(self.path.poses) - 1
+        self.rejoin_index = index
+        self.handover_index = min(self.rejoin_index + int(round(0.5 * self.rejoin_tail / SPACING)), last)
 
     def current_zone(self):
         ztype, stamp = self.zone
@@ -156,7 +210,14 @@ class RouteSupervisor:
         return ztype
 
     def want_avoid(self):
-        return self.mode == "avoid" or (self.mode == "auto" and self.current_zone() == "avoid" and bool(self.avoid_zones))
+        if self.mode == "avoid":
+            return True
+        if not (self.mode == "auto" and self.current_zone() == "avoid" and self.avoid_zones):
+            return False
+        if self.blocked is None:
+            return True  # no costmap: the whole avoid zone is a detour
+        index = self.robot_index(self.start_index)
+        return last_in(self.blocked, index, self.zone_exit(index)) is not None
 
     def send_exe(self, poses, controller, kind):
         goal = ExePathGoal()
@@ -208,15 +269,20 @@ class RouteSupervisor:
 
     def start_avoid(self):
         index = self.robot_index(self.start_index)
-        last = len(self.path.poses) - 1
-        self.rejoin_index = last if self.mode == "avoid" else self.exit_index(index)
-        self.handover_index = min(self.rejoin_index + int(round(0.5 * self.rejoin_tail / SPACING)), last)
+        self.set_rejoin(self.rejoin_after(index))
         rospy.loginfo("avoidance from route index %d, rejoin at index %d, hand over at index %d",
                       index, self.rejoin_index, self.handover_index)
         self.set_state("AVOID_PREP")
         self.try_detour()
 
     def try_detour(self):
+        if self.state in ("AVOID", "AVOID_HOLD"):
+            # more of the obstacle may be known now: rejoin further on if need be, never further back
+            rejoin = max(self.rejoin_after(self.robot_index(self.start_index)), self.rejoin_index)
+            if rejoin != self.rejoin_index:
+                self.set_rejoin(rejoin)
+                rospy.loginfo("rejoin moved to index %d, hand over at index %d", self.rejoin_index,
+                              self.handover_index)
         poses, why = self.plan_detour()
         if poses is None:
             if self.state == "AVOID":
@@ -250,18 +316,49 @@ class RouteSupervisor:
                 if self.mode == "stop_go":
                     self.follow(self.robot_index(self.start_index))
                     return
+                now = rospy.get_time()
                 if self.state == "AVOID":
-                    x, y = self.robot_xy()
-                    handover = self.path.poses[self.handover_index].pose.position
-                    if math.hypot(handover.x - x, handover.y - y) < 0.35:
-                        self.follow(self.robot_index(self.rejoin_index))
+                    x, y, yaw = self.robot_pose()
+                    k = self.robot_index(self.handover_index)
+                    on_route = self.path.poses[k].pose
+                    q = on_route.orientation
+                    route_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+                    off = abs(math.atan2(math.sin(yaw - route_yaw), math.cos(yaw - route_yaw)))
+                    if (math.hypot(on_route.position.x - x, on_route.position.y - y) < 0.35 and
+                            off <= self.handover_yaw_tolerance):
+                        self.follow(k)
                         return
-                if rospy.get_time() - self.last_plan >= self.replan_period:
+                    blocked, since = self.avoid_blocked
+                    if blocked and now - since >= self.replan_period and now - self.last_plan >= self.replan_period:
+                        rospy.loginfo("the detour is blocked: replanning")
+                        self.try_detour()
+                elif now - self.last_plan >= self.replan_period:
                     self.try_detour()
 
     # ---- callbacks ----
     def on_zone(self, msg):
         self.zone = (msg.data, rospy.get_time())
+
+    def on_costmap(self, msg):
+        self.grid = GridView.from_msg(msg)
+        self.grid.data = list(self.grid.data)
+        self.update_blocked()
+
+    def on_costmap_update(self, msg):
+        g = self.grid
+        if g is None or msg.x + msg.width > g.width or msg.y + msg.height > g.height:
+            return  # no full grid yet, or one of another size: wait for the next full grid
+        for row in range(msg.height):
+            start = (msg.y + row) * g.width + msg.x
+            g.data[start:start + msg.width] = msg.data[row * msg.width:(row + 1) * msg.width]
+        self.update_blocked()
+
+    def update_blocked(self):
+        self.blocked = blocked_indices(self.points, self.grid, self.zone_points, self.rejoin_clear_radius)
+
+    def on_avoid_blocked(self, msg):
+        if msg.data != self.avoid_blocked[0]:
+            self.avoid_blocked = (msg.data, rospy.get_time())
 
     def on_mode(self, msg):
         if msg.data not in ("auto", "stop_go", "avoid"):

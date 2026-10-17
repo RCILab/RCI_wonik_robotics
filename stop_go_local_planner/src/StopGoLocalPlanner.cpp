@@ -360,12 +360,14 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::Twist &cmd_vel)
             control_vel_x = std::min(planned_speed, m_last_cmd_vel.linear.x + m_limits.acc_lim_x * dt);
 
             // The drive units' steering angles follow the curvature of the motion, not the yaw rate, so
-            // the curvature is low passed (and the yaw rate v * curvature slew limited): the steering then
-            // moves smoothly also while the speed changes. A steering step makes the base stop, re-steer and
-            // start again (stop-steer-go).
+            // the curvature is low passed and rate limited (max_curvature_rate; the yaw rate v * curvature is
+            // slew limited on top): the steering then moves smoothly also while the speed changes and when a
+            // plan is handed over while driving. A steering step makes the base stop, re-steer and start
+            // again (stop-steer-go).
             if (m_have_curvature)
             {
                 curvature = curvature * m_low_pass_gain + m_curvature * (1 - m_low_pass_gain);
+                curvature = slew(m_curvature, curvature, m_max_curvature_rate * dt);
             }
             m_curvature = curvature;
             m_have_curvature = true;
@@ -562,6 +564,7 @@ void StopGoLocalPlanner::initialize(std::string name, tf2_ros::Buffer *tf, costm
     m_corner_angle = private_nh.param<double>("corner_angle", 0.17);
     m_trans_acc_lim_theta = private_nh.param<double>("trans_acc_lim_theta", 0.4);
     m_low_pass_gain = private_nh.param<double>("low_pass_gain", 0.5);
+    m_max_curvature_rate = private_nh.param<double>("max_curvature_rate", 1.0);
     m_goal_tune_time = private_nh.param<double>("goal_tune_time", 0.3);
     m_holonomic = private_nh.param<bool>("holonomic", true);
     m_adjust_max_dist = private_nh.param<double>("adjust_max_dist", 0.3);
