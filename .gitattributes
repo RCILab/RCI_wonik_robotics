@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings, also in Windows checkouts used from WSL.
+*.sh text eol=lf
+*.stl binary
+*.gif binary
