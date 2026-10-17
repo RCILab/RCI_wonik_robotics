@@ -20,6 +20,6 @@ add_dependencies(qd_kinematic_base ${catkin_EXPORTED_TARGETS})
 install(TARGETS qd_kinematic_base
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
 )
-install(DIRECTORY launch
+install(DIRECTORY launch worlds
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
