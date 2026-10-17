@@ -1,0 +1,158 @@
+<?xml version="1.0"?>
+<!-- Gazebo-only part of the SD model; included by sd.urdf.xacro and ignored outside Gazebo.
+     Uses the properties g (geometry.yaml) and wheel_r of the including file.
+       sim_drive:=kinematic  wheel, roller and caster contacts are frictionless and the qd_kinematic_base
+                             plugin (wonik_gazebo) moves the base with the twist that the measured steer
+                             angle and wheel speed imply. No slip; for SLAM and navigation work.
+       sim_drive:=physics    the drive wheel moves the base through contact friction and the fork rollers
+                             (free to roll, not to slide) hold the axle. Not tuned: only for a first look. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="sd_gazebo" params="sim_drive depth_camera:=true">
+    <xacro:property name="kinematic" value="${sim_drive == 'kinematic'}"/>
+    <xacro:if value="${sim_drive not in ['kinematic', 'physics']}">
+      <xacro:unknown_sim_drive_use_kinematic_or_physics/>
+    </xacro:if>
+
+    <gazebo reference="base_link">
+      <material>Gazebo/White</material>
+    </gazebo>
+    <gazebo reference="chassis_link">
+      <material>Gazebo/Blue</material>
+    </gazebo>
+    <gazebo reference="fork_link">
+      <material>Gazebo/Grey</material>
+    </gazebo>
+
+    <xacro:property name="unit" value="${g['module_names'][0]}"/>
+    <gazebo reference="${unit}_steer_link">
+      <material>Gazebo/Grey</material>
+    </gazebo>
+    <gazebo reference="${unit}_drive_link">
+      <material>Gazebo/Orange</material>
+      <mu1>${0.0 if kinematic else 2.0}</mu1>
+      <mu2>${0.0 if kinematic else 2.0}</mu2>
+    </gazebo>
+
+    <xacro:macro name="rollers_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['roller_names'])}">
+        <gazebo reference="${g['roller_names'][i]}_link">
+          <material>Gazebo/Green</material>
+          <mu1>${0.0 if kinematic else 1.0}</mu1>
+          <mu2>${0.0 if kinematic else 1.0}</mu2>
+        </gazebo>
+        <xacro:rollers_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:rollers_gazebo/>
+
+    <xacro:macro name="casters_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['caster_names'])}">
+        <gazebo reference="${g['caster_names'][i]}_link">
+          <mu1>${0.0 if kinematic else 0.01}</mu1>
+          <mu2>${0.0 if kinematic else 0.01}</mu2>
+        </gazebo>
+        <xacro:casters_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:casters_gazebo/>
+
+    <!-- Front depth camera: /camera/depth/points (frame camera_depth_optical_frame), 15 Hz, D435 FOV -->
+    <xacro:if value="${depth_camera}">
+      <gazebo reference="camera_link">
+        <sensor type="depth" name="depth_camera">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera>
+            <horizontal_fov>1.5184</horizontal_fov>
+            <image>
+              <format>R8G8B8</format>
+              <width>424</width>
+              <height>240</height>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>10.0</far>
+            </clip>
+          </camera>
+          <plugin name="depth_camera_controller" filename="libgazebo_ros_openni_kinect.so">
+            <alwaysOn>true</alwaysOn>
+            <updateRate>15</updateRate>
+            <cameraName>camera</cameraName>
+            <imageTopicName>rgb/image_raw</imageTopicName>
+            <cameraInfoTopicName>rgb/camera_info</cameraInfoTopicName>
+            <depthImageTopicName>depth/image_raw</depthImageTopicName>
+            <depthImageCameraInfoTopicName>depth/camera_info</depthImageCameraInfoTopicName>
+            <pointCloudTopicName>depth/points</pointCloudTopicName>
+            <frameName>camera_depth_optical_frame</frameName>
+            <pointCloudCutoff>0.1</pointCloudCutoff>
+            <pointCloudCutoffMax>6.0</pointCloudCutoffMax>
+            <baseline>0.05</baseline>
+            <distortionK1>0</distortionK1>
+            <distortionK2>0</distortionK2>
+            <distortionK3>0</distortionK3>
+            <distortionT1>0</distortionT1>
+            <distortionT2>0</distortionT2>
+            <CxPrime>0</CxPrime>
+            <Cx>0</Cx>
+            <Cy>0</Cy>
+            <focalLength>0</focalLength>
+            <hackBaseline>0</hackBaseline>
+          </plugin>
+        </sensor>
+      </gazebo>
+    </xacro:if>
+
+    <!-- IMU: /imu/data (frame imu_link) at 200 Hz, as on cobot_v2 (typical MEMS gyro noise, no bias). -->
+    <gazebo reference="imu_link">
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>200</update_rate>
+        <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+          <topicName>imu/data</topicName>
+          <bodyName>imu_link</bodyName>
+          <frameName>imu_link</frameName>
+          <updateRateHZ>200.0</updateRateHZ>
+          <gaussianNoise>0.005</gaussianNoise>
+          <xyzOffset>0 0 0</xyzOffset>
+          <rpyOffset>0 0 0</rpyOffset>
+          <initialOrientationAsReference>false</initialOrientationAsReference>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <gazebo>
+      <!-- Steer joint: position, drive joint: velocity (as on the real drive unit). -->
+      <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
+        <robotNamespace>/</robotNamespace>
+        <robotSimType>gazebo_ros_control/DefaultRobotHWSim</robotSimType>
+        <legacyModeNS>true</legacyModeNS>
+      </plugin>
+
+      <!-- Ground truth of base_footprint for evaluation: /ground_truth/odom in frame world, no TF. -->
+      <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
+        <alwaysOn>true</alwaysOn>
+        <updateRate>50.0</updateRate>
+        <bodyName>base_footprint</bodyName>
+        <topicName>ground_truth/odom</topicName>
+        <frameName>world</frameName>
+        <gaussianNoise>0.0</gaussianNoise>
+        <xyzOffsets>0 0 0</xyzOffsets>
+        <rpyOffsets>0 0 0</rpyOffsets>
+      </plugin>
+
+      <xacro:if value="${kinematic}">
+        <plugin name="qd_kinematic_base" filename="libqd_kinematic_base.so">
+          <driveType>${g['drive_type']}</driveType>
+          <moduleX>${' '.join([str(v) for v in g['module_x']])}</moduleX>
+          <moduleY>${' '.join([str(v) for v in g['module_y']])}</moduleY>
+          <fixedAxleX>${g['fixed_axle_x']}</fixedAxleX>
+          <wheelRadius>${wheel_r}</wheelRadius>
+          <steerJoints>${' '.join(g['steer_joints'])}</steerJoints>
+          <driveJoints>${' '.join(g['drive_joints'])}</driveJoints>
+        </plugin>
+      </xacro:if>
+    </gazebo>
+  </xacro:macro>
+
+</robot>

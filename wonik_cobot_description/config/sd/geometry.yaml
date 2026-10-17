@@ -1,0 +1,49 @@
+# Wonik SD (Single Drive): one steer+drive unit in the body and two fixed rollers at the tip of a
+# single fork, pallet-truck style. VIRTUAL model: no CAD yet. Dimensions are read off the drawing on
+# p.5 of "구동방식_경희대.pdf" (T-Robotics workspace docs/), scaled by its only two dimensions, the drive
+# unit to roller axle distance (785 mm) and the roller spacing (223 mm). Everything else is PLACEHOLDER.
+# Single source of truth: read by urdf/sd.urdf.xacro and, via the bringup launch, by
+# qd_kinematics' kinematics_node.
+#
+# Frame: base_footprint on the floor at the middle of the fork roller axle, z up, x = toward the body.
+# The fixed rollers cannot slide sideways, so the robot turns in place about this point (the planners
+# and the collision checks rotate about base_footprint). Driving forward = body first.
+
+drive_type: tricycle
+module_names: [main]
+module_x: [0.785]             # drive unit steer axis (drawing: 785 mm ahead of the roller axle) [m]
+module_y: [0.0]
+fixed_axle_x: 0.0             # roller axle at base_footprint
+wheel_diameter: 0.16          # PLACEHOLDER: tyre in the drawing's top view; drive unit spec pending
+wheel_width: 0.05
+steer_joints: [main_steer_joint]
+drive_joints: [main_drive_joint]
+
+# Fixed fork rollers (drawing: 223 mm apart), and two casters under the body.
+roller_names: [left_roller, right_roller]
+roller_x: [0.0, 0.0]
+roller_y: [0.1115, -0.1115]
+roller_diameter: 0.08
+caster_names: [left_caster, right_caster]
+caster_x: [0.937, 0.937]
+caster_y: [0.265, -0.265]
+caster_diameter: 0.10
+
+# Collision boxes [x_min, x_max, y_min, y_max, z_min, z_max] in base_footprint (drawing p.5):
+# lower body (with the operator panel on top), lift column (front part of the body, full height),
+# fork (one plate, 0.30 m wide, its tip 0.11 m past the rollers). Mass is a guess.
+body_box: [0.632, 1.048, -0.383, 0.383, 0.04, 1.16]
+column_box: [0.632, 0.77, -0.37, 0.37, 1.16, 1.70]
+fork_box: [-0.112, 0.632, -0.152, 0.152, 0.03, 0.10]
+body_mass: 150.0
+
+# 3D LiDAR on top of the lift column, where the drawing shows one (sensor base). Velodyne HDL-32E
+# stand-in; from 1.7 m it does not see low obstacles close to the robot (floor at ~2.9 m).
+lidar_xyz: [0.69, 0.0, 1.70]
+
+# Front depth camera (RealSense D435) on the body front face, looking forward. PLACEHOLDER mount.
+depth_camera_xyz: [1.06, 0.0, 0.40]
+
+# IMU (6-axis) mount in base_footprint: position [m], orientation roll/pitch/yaw [rad]. PLACEHOLDER.
+imu_xyz: [0.85, 0.0, 0.30]
+imu_rpy: [0.0, 0.0, 0.0]

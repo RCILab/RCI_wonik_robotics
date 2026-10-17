@@ -1,0 +1,15 @@
+# The robot itself in the LiDAR cloud: points inside this box (base_footprint) are removed from /points
+# (pcl CropBox, scan.launch) before the cloud becomes /scan and goes to the obstacle detector. SD: the body with the lift column (footprint.yaml) plus 2 cm,
+# floor to above the column; the fork lies below the scan heights. In the simulation the HDL-32E stand-in
+# on the column sees the column's side faces (its rays start at min_range, inside the column, and the
+# sensor noise scatters them up to ~3 cm); in the scan these points left shadows that the local costmap
+# kept as unobserved next to the body.
+input_frame: base_footprint
+output_frame: base_footprint
+negative: true
+min_x: 0.592
+max_x: 1.088
+min_y: -0.423
+max_y: 0.423
+min_z: -0.10
+max_z: 2.00

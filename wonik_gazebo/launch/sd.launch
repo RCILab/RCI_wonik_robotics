@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- SD (single drive, virtual model) in Gazebo; arguments as in sim.launch.
+       roslaunch wonik_gazebo sd.launch [world:=wonik_hall] [gui:=false rviz:=false] [depth_camera:=false] -->
+<launch>
+  <arg name="sim_drive" default="kinematic"/>
+  <arg name="world" default="empty"/>
+  <arg name="world_file" default="$(find wonik_gazebo)/worlds/$(arg world).world"/>
+  <arg name="gui" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="lidar_gpu" default="false"/>
+  <arg name="depth_camera" default="true"/>
+  <arg name="ekf" default="true"/>
+  <arg name="x" default="0.0"/>
+  <arg name="y" default="0.0"/>
+  <arg name="yaw" default="0.0"/>
+
+  <include file="$(find wonik_gazebo)/launch/sim.launch" pass_all_args="true">
+    <arg name="robot" value="sd"/>
+  </include>
+</launch>
