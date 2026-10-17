@@ -48,7 +48,7 @@ Stop-and-go along the U route (`stop_go` controller, AMCL on the saved map): str
 |:---:|:---:|
 | <img src="docs/gifs/cobot_v2_stop_go_route.gif" width="420"> | <img src="docs/gifs/cobot_v2_stop_go_route_gazebo.gif" width="420"> |
 
-Zones on the same route (`config/zones/wonik_hall.yaml`): in the avoid zone the robot drives around the obstacle on a detour from the global planner and rejoins the route; in the stop zone (and outside any zone) it stops in front of the obstacle and continues once it is removed (5x speed).
+Zones on the same route (`config/zones/wonik_hall.yaml`): in the avoid zone, once an obstacle blocks the route, the robot drives around it on a detour from the global planner without stopping and rejoins the route right after it; in the stop zone (and outside any zone) it stops in front of the obstacle and continues once it is removed (5x speed).
 
 | Zones | Gazebo |
 |:---:|:---:|
