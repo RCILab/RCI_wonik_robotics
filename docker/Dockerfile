@@ -10,6 +10,7 @@ RUN echo 'Acquire::Retries "10";' > /etc/apt/apt.conf.d/80-retries \
       ros-noetic-gazebo-ros-control \
       ros-noetic-velodyne-simulator \
       ros-noetic-teleop-twist-keyboard \
+      ros-noetic-robot-localization \
  && rm -rf /var/lib/apt/lists/*
 
 # 2D SLAM and localization: /points -> /scan -> slam_toolbox, map_server + amcl

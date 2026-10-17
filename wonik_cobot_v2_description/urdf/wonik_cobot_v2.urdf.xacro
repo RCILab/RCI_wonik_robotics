@@ -183,6 +183,22 @@
   </joint>
   <link name="camera_depth_optical_frame"/>
 
+  <!-- IMU: /imu/data in frame imu_link -->
+  <xacro:property name="i" value="${g['imu_xyz']}"/>
+  <xacro:property name="ir" value="${g['imu_rpy']}"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="${i[0]} ${i[1]} ${i[2]}" rpy="${ir[0]} ${ir[1]} ${ir[2]}"/>
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+
   <xacro:cobot_v2_gazebo sim_drive="$(arg sim_drive)" depth_camera="$(arg depth_camera)"/>
 
 </robot>

@@ -1,0 +1,40 @@
+# robot_localization EKF (ekf_odom in base.launch): wheel odometry + IMU yaw rate -> /odom and
+# TF odom -> base_footprint. The wheel odometry (/wheel/odom from qd_kinematics) is an input only.
+frequency: 50
+sensor_timeout: 0.1
+two_d_mode: true
+publish_tf: true
+
+map_frame: map
+odom_frame: odom
+base_link_frame: base_footprint
+world_frame: odom
+
+# State vector order:
+# [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az]
+
+# Wheel odometry: body velocities only (vx, vy, vyaw). Its yaw-rate variance (twist_covariance_diagonal
+# in kinematics.yaml, 0.01) is far above the gyro's (2.5e-5), so the yaw rate follows the IMU and the
+# wheels only stand in for it when the IMU drops out.
+odom0: wheel/odom
+odom0_config: [false, false, false,
+               false, false, false,
+               true,  true,  false,
+               false, false, true,
+               false, false, false]
+odom0_differential: false
+odom0_relative: false
+odom0_queue_size: 10
+
+# IMU: yaw rate only. A 6-axis IMU has no absolute yaw, and integrating its accelerations would drift
+# faster than the wheel speeds. The mount (geometry.yaml imu_xyz / imu_rpy) is applied through TF.
+imu0: imu/data
+imu0_config: [false, false, false,
+              false, false, false,
+              false, false, false,
+              false, false, true,
+              false, false, false]
+imu0_differential: false
+imu0_relative: false
+imu0_queue_size: 50
+imu0_remove_gravitational_acceleration: true

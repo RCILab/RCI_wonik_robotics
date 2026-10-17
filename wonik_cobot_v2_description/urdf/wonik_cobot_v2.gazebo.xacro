@@ -100,6 +100,26 @@
       </gazebo>
     </xacro:if>
 
+    <!-- IMU: /imu/data (frame imu_link) at 200 Hz. The noise is a typical MEMS gyro (0.005 rad/s) and
+         also sets the message covariances (noise^2). No bias: robot_localization does not estimate one,
+         so a real gyro needs its bias removed by the driver (e.g. calibrated at standstill). -->
+    <gazebo reference="imu_link">
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>200</update_rate>
+        <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+          <topicName>imu/data</topicName>
+          <bodyName>imu_link</bodyName>
+          <frameName>imu_link</frameName>
+          <updateRateHZ>200.0</updateRateHZ>
+          <gaussianNoise>0.005</gaussianNoise>
+          <xyzOffset>0 0 0</xyzOffset>
+          <rpyOffset>0 0 0</rpyOffset>
+          <initialOrientationAsReference>false</initialOrientationAsReference>
+        </plugin>
+      </sensor>
+    </gazebo>
+
     <gazebo>
       <!-- Steer joints: position, drive joints: velocity (as on the real drive units). -->
       <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">

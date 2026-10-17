@@ -33,3 +33,9 @@ lidar_xyz: [0.30, 0.15, 0.851]
 # Front depth camera (RealSense D435 in the CAD at the front face, 0.24 m high), looking forward.
 # Placed just in front of the bumper (0.449 m) so the body mesh does not block it in Gazebo.
 depth_camera_xyz: [0.45, 0.0, 0.24]
+
+# IMU (6-axis, no magnetometer) mount in base_footprint: position [m], orientation roll/pitch/yaw [rad].
+# Placeholder inside the lower body until Wonik decides the IMU and its mount; robot_localization
+# reads this through TF (base_link -> imu_link), so a rotated mount only needs imu_rpy.
+imu_xyz: [0.0, 0.0, 0.20]
+imu_rpy: [0.0, 0.0, 0.0]

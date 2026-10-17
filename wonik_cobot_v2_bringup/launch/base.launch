@@ -1,12 +1,17 @@
 <?xml version="1.0"?>
 <!-- Robot-side bringup, shared by the real robot and the simulation: robot model + TF, ros_control
-     controller configuration and the qd_kinematics node. The hardware (drive unit driver or Gazebo)
-     and the controller spawner come from the including launch file.
-     Interface: /cmd_vel in, /odom + TF odom->base_footprint out (wheel odometry from joint_states). -->
+     controller configuration, the qd_kinematics node and the odometry filter. The hardware (drive unit
+     driver or Gazebo, and an IMU driver on /imu/data) and the controller spawner come from the
+     including launch file.
+     Interface: /cmd_vel in, /odom + TF odom->base_footprint out.
+       ekf:=true (default)  qd_kinematics publishes the wheel odometry on /wheel/odom only;
+                            robot_localization (ekf_odom) fuses it with the IMU yaw rate into /odom + TF.
+       ekf:=false           qd_kinematics publishes the wheel odometry on /odom + TF directly (no IMU). -->
 <launch>
   <arg name="geometry" default="$(find wonik_cobot_v2_description)/config/geometry.yaml"/>
   <!-- extra xacro arguments, e.g. "sim_drive:=physics" from the Gazebo launch -->
   <arg name="xacro_args" default=""/>
+  <arg name="ekf" default="true"/>
 
   <param name="robot_description"
          command="$(find xacro)/xacro $(find wonik_cobot_v2_description)/urdf/wonik_cobot_v2.urdf.xacro
@@ -20,5 +25,13 @@
   <node pkg="qd_kinematics" type="kinematics_node" name="kinematics_node" output="screen">
     <rosparam file="$(arg geometry)" command="load"/>
     <rosparam file="$(find wonik_cobot_v2_bringup)/config/kinematics.yaml" command="load"/>
+    <param if="$(arg ekf)" name="publish_tf" value="false"/>
+    <remap if="$(arg ekf)" from="odom" to="wheel/odom"/>
+  </node>
+
+  <node if="$(arg ekf)" pkg="robot_localization" type="ekf_localization_node" name="ekf_odom"
+        clear_params="true">
+    <rosparam file="$(find wonik_cobot_v2_bringup)/config/ekf.yaml" command="load"/>
+    <remap from="odometry/filtered" to="odom"/>
   </node>
 </launch>
