@@ -1,236 +1,195 @@
-# RCI_wonik_robotics2 - ROS 2 Humble
+ROS 2 Humble-based simulation, kinematics, SLAM, and autonomous navigation for Wonik Robotics AGVs.
 
-ROS 2 Humble / Ubuntu 22.04 port of the Wonik QD (cobot_v2) and SD AGV simulation.
-Latest ROS 1 source included: ae1bb3a (2026-10-18).
-Branch: **humble-devel**. The original ROS 1 working tree is separate and unchanged.
-This directory was created as a Git worktree: its Git metadata lives in the original repository,
-so keep that repository when moving or backing up this worktree.
-The shared robot packages are **wonik_cobot_description** and **wonik_cobot_bringup**;
-per-robot files live under config/cobot_v2 and config/sd. Only the project directory has the suffix **2**.
+## Overview
 
-## What is preserved
+This repository contains ROS 2 packages for Wonik Robotics AGVs, developed through a joint research collaboration between Wonik Robotics and the RCI Lab at Kyung Hee University. Two models are available: **cobot_v2** (QD #2 type, without the arm) and **SD** (single-drive pallet-truck type, virtual model).
 
-- QD: two diagonal steer/drive modules; SD: one steer/drive module and fixed fork rollers.
-- Shared geometry and forward/inverse kinematics; SD turning centre at the fork roller axle.
-- SD is a drawing-based virtual model made of primitives, pending the actual CAD.
-- Stop -> align -> creep -> drive control, feedback/command timeouts, latched fault and explicit reset.
-- Wheel odometry + IMU EKF; AMCL localization and slam_toolbox mapping.
-- StopGo route following and PurePursuit detours, stop/avoid zones and heading-aligned route rejoining.
-- Clear avoid zones stay on the route; obstacles trigger detours and an early return past the blockage.
-  Running detours replan only while blocked. Curvature smoothing avoids abrupt steering steps.
-- Convex/nonconvex swept-footprint checks, including off-centre SD rotations; predicted PurePursuit
-  yaw-rate transitions, 8-direction protective fields and direction-specific stopping angles.
-- LiDAR body-point removal, sensor freshness and NaN checks, and the final command gate.
-- Controller handover at corners skips the completed segment stub.
-- Six Gazebo fault-injection scenarios, including feedback loss and depth-camera loss.
-- Kinematic and contact-physics simulation modes, the hall/map/U route, LiDAR and depth camera.
+## Dependencies
 
-ROS interfaces use rclcpp/rclpy, ament/colcon, ros2_control, and Nav2 Controller plugins.
-The route supervisor now calls Nav2 FollowPath and ComputePathToPose asynchronously.
-Its planning timeout and safety heartbeat continue while an action is pending.
+- Ubuntu 22.04 / ROS 2 Humble
+- Gazebo Classic 11
+- Nav2, ros2_control, robot_localization and slam_toolbox (installed through rosdep or the Docker image)
 
-## Build on Ubuntu 22.04 with ROS 2 Humble
+## Packages
 
-Place this directory under a workspace's src directory. Run in that workspace:
+Clone this repository into the `src/` folder of a colcon workspace.
+
+| Package | Contents |
+| --- | --- |
+| `qd_kinematics` | Steer-drive kinematics for N-module swerve and single-drive tricycle bases. `/cmd_vel` to steering angles and wheel speeds through a stop / steer-align / creep / drive state machine; stamped joint feedback to wheel odometry. Command and feedback timeouts, measured startup checks and latched faults. ROS-independent core with unit tests. |
+| `wonik_cobot_description` | URDF/xacro and geometry in `urdf/<robot>.urdf.xacro` and `config/<robot>/geometry.yaml`. cobot_v2 uses meshes converted from Wonik's STEP model. SD uses primitives with dimensions from the drawing, pending the actual CAD. Gazebo-specific tags are in separate `.gazebo.xacro` files. |
+| `wonik_cobot_bringup` | Per-robot launch files (`cobot_v2.launch.py`, `sd.launch.py`) through `base.launch.py robot:=<robot>`. Loads the model, ros2_control configuration and kinematics, with wheel odometry on `/wheel/odom`. The EKF fuses wheel velocities and IMU yaw rate into `/odom` and `odom -> base_footprint` TF (`ekf:=false`: wheel odometry only). |
+| `wonik_gazebo` | Per-robot simulation launch files through `sim.launch.py`: world, robot, joint controllers and bringup. Includes the `qd_kinematic_base` plugin, an empty world and `wonik_hall`, a 16 m x 10 m test hall with a central island. |
+| `wonik_navigation` | Robot-specific configuration under `config/<robot>/`, selected with `robot:=<robot>` (default `cobot_v2`). LiDAR body-point removal, laser-scan projection, slam_toolbox mapping, AMCL localization and Nav2 route following. Includes the route supervisor, stop/avoid zones, obstacle detector and final command gate. |
+| `stop_go_local_planner` | Nav2 Controller plugin for straight route segments and in-place turns at corners, up to 1.0 m/s. Stops and waits when blocked. Small endpoint errors are corrected sideways on QD (`holonomic: true`) or along the heading on SD (`false`). |
+| `pure_pursuit_local_planner` | Nav2 Controller plugin for curved detours. Slows in curves, smooths curvature changes and stops when the swept footprint or path ahead is blocked. Reports blockage to the route supervisor for replanning. |
+| `local_planner_checks` | Shared swept-footprint collision checks for translations and turns, including nonconvex polygons and off-centre rotation. Unknown and off-map cells block motion. Includes stopping-distance checks and Nav2 goal/progress checkers. |
+
+The robot-side packages use ros2_control position interfaces for steering, velocity interfaces for drive wheels and stamped `/joint_states` feedback. A hardware driver supplies these interfaces and the actual sensor topics. Timeouts, faults, collision checks and driver requirements are described in [docs/safety.md](docs/safety.md).
+
+In Gazebo, `sim_drive` selects how the wheels move the base:
+
+- `kinematic` (default): frictionless wheel contacts; the Gazebo plugin moves the base using the twist implied by measured steering angles and wheel speeds. Used for SLAM and navigation.
+- `physics`: wheel contacts drive the base through friction, including slip. Used for inspecting kinematics and wheel odometry; the EKF also uses simulated IMU yaw rate.
+
+## Results
+
+The following GIFs were recorded from **ROS 2 Humble**, using Gazebo and RViz2. Playback is accelerated; the captures use the default kinematic drive mode.
+
+### cobot_v2 (QD #2 type)
+
+Basic motion in Gazebo, commanded through `/cmd_vel` (2.5x playback):
+
+| Mode 1: straight, sideways, diagonal | Mode 2: arc turn | Mode 3: spin in place |
+| :---: | :---: | :---: |
+| <img src="docs/gifs/cobot_v2_mode1.gif" width="280"> | <img src="docs/gifs/cobot_v2_mode2.gif" width="280"> | <img src="docs/gifs/cobot_v2_mode3.gif" width="280"> |
+
+2D SLAM and AMCL localization in the test hall (`world:=wonik_hall`). The RViz2 captures show the map and laser scan; mapping builds the map while driving around the central island, and AMCL uses that saved map (8x playback).
+
+| Test hall (Gazebo) | Mapping (slam_toolbox) | Localization (AMCL) |
+| :---: | :---: | :---: |
+| <img src="docs/images/wonik_hall_gazebo.png" width="280"> | <img src="docs/gifs/cobot_v2_mapping.gif" width="280"> | <img src="docs/gifs/cobot_v2_localization.gif" width="280"> |
+
+Stop-and-go along the U route `(0,0) -> (12,0) -> (12,6) -> (0,6)`: straight legs at up to 1.0 m/s, a stop and an in-place turn at each corner (5x playback, the same run in RViz2 and Gazebo).
+
+| U route (RViz2) | Gazebo |
+| :---: | :---: |
+| <img src="docs/gifs/cobot_v2_stop_go_route.gif" width="420"> | <img src="docs/gifs/cobot_v2_stop_go_route_gazebo.gif" width="420"> |
+
+Zones on the same route (`config/zones/wonik_hall.yaml`): an obstacle in the avoid zone triggers a detour and an early return to the route. In the stop zone, the robot waits in front of the obstacle and continues after it is removed (5x playback).
+
+| Zones (RViz2) | Gazebo |
+| :---: | :---: |
+| <img src="docs/gifs/cobot_v2_zones.gif" width="420"> | <img src="docs/gifs/cobot_v2_zones_gazebo.gif" width="420"> |
+
+### SD (virtual model)
+
+SD has one steered drive unit in the body and fixed rollers at the fork tip. It cannot move sideways and turns about the middle of the roller axle (`base_footprint`), with the body swinging around it. The drawing-based model uses the same packages and planners with `config/sd/`.
+
+Basic motion in Gazebo (2.5x playback):
+
+| Mode 1: straight | Mode 2: arc turn | Mode 3: turn in place |
+| :---: | :---: | :---: |
+| <img src="docs/gifs/sd_mode1.gif" width="280"> | <img src="docs/gifs/sd_mode2.gif" width="280"> | <img src="docs/gifs/sd_mode3.gif" width="280"> |
+
+Stop-and-go along the U route (`stop_go`, AMCL with the differential odometry model; 5x playback):
+
+| U route (RViz2) | Gazebo |
+| :---: | :---: |
+| <img src="docs/gifs/sd_stop_go_route.gif" width="420"> | <img src="docs/gifs/sd_stop_go_route_gazebo.gif" width="420"> |
+
+Obstacle avoidance and stop zones on the same route (5x playback):
+
+| Zones (RViz2) | Gazebo |
+| :---: | :---: |
+| <img src="docs/gifs/sd_zones.gif" width="420"> | <img src="docs/gifs/sd_zones_gazebo.gif" width="420"> |
+
+## Quick start
+
+With ROS 2 Humble installed:
 
 ```bash
 source /opt/ros/humble/setup.bash
+sudo apt install python3-colcon-common-extensions python3-rosdep ros-humble-teleop-twist-keyboard
+# First ROS workspace only: sudo rosdep init
+rosdep update
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone --branch humble-devel --single-branch https://github.com/RCILab/RCI_wonik_robotics.git RCI_wonik_robotics2
+cd ~/ros2_ws
 rosdep install --from-paths src --ignore-src --rosdistro humble -r -y
 colcon build --symlink-install --parallel-workers 2
 source install/setup.bash
+
+ros2 launch wonik_gazebo cobot_v2.launch.py
+# Or SD, in place of the launch above:
+ros2 launch wonik_gazebo sd.launch.py
+
+# Another terminal; source install/setup.bash in every terminal
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p speed:=0.3 -p turn:=0.5
+```
+
+The base stops when `/cmd_vel` is older than 0.5 s. Hold a movement key to keep publishing commands with keyboard repeat; the Humble keyboard teleop has no `repeat_rate` parameter. Teleop keys: `i` / `,` forward/back, `Shift+J` / `Shift+L` sideways (QD only), `j` / `l` turn in place, `u` / `o` arcs, `k` stop, `z` slower. A large steering change causes a stop, wheel alignment and creep before driving.
+
+Mapping and localization in the test hall:
+
+```bash
+ros2 launch wonik_gazebo cobot_v2.launch.py world:=wonik_hall rviz:=false
+# Another terminal: drive with teleop while mapping
+ros2 launch wonik_navigation mapping.launch.py
+# Save the completed map
+ros2 run nav2_map_server map_saver_cli -f /absolute/output/wonik_hall --ros-args -p use_sim_time:=true
+
+# Stop mapping and restart the simulator, then localize on the saved map
+ros2 launch wonik_navigation localization.launch.py map_file:=/absolute/output/wonik_hall.yaml
+```
+
+Omit `map_file` to use the included hall map. For SD, use `sd.launch.py` and add `robot:=sd` to mapping, localization or navigation. The route launch is shared.
+
+Route following with zones, in three separate terminals:
+
+```bash
+ros2 launch wonik_gazebo cobot_v2.launch.py world:=wonik_hall rviz:=false
+ros2 launch wonik_navigation navigation.launch.py
+ros2 launch wonik_navigation route.launch.py
+```
+
+Mode and controller selection during a mission:
+
+```bash
+ros2 topic pub --once /route_supervisor/mode std_msgs/msg/String "{data: avoid}"          # auto | stop_go | avoid
+ros2 topic pub --once /route_supervisor/controller std_msgs/msg/String "{data: stop_go_slow}"
+```
+
+Data flow: Nav2 controller -> `/cmd_vel_raw` -> command gate -> `/cmd_vel` -> `qd_kinematics`. Clear avoid zones remain on the route; a blocked route triggers a detour. Running detours replan only when blocked and hand back to StopGo after aligning with the route. Outside a confirmed detour, the gate checks directional stopping distances and footprint-based turn clearances. Required sensor loss stops motion in every state.
+
+Simulation options include `sim_drive:=physics`, `ekf:=false`, `gui:=false rviz:=false`, `world_file:=/absolute/path.world` and `x:=0.0 y:=0.0 yaw:=0.0`. Give navigation the same initial pose if the spawn pose changes. Custom maps and routes use `map_file:=/absolute/path.yaml` and `route_file:=/absolute/path.yaml`.
+
+A depth camera needs an X display even without the Gazebo GUI. Use Xvfb on headless Linux, or pass `depth_camera:=false` to **both** simulation and navigation for LiDAR-only operation. The Docker helpers supply a display. Teleop during navigation goes to `/cmd_vel_raw`; stop autonomous route execution before manual driving. Mapping-only teleop goes directly to `/cmd_vel`.
+
+Tests and fault injection:
+
+```bash
 colcon test --executor sequential
 colcon test-result --verbose
-```
 
-For an existing checkout from before the package rename, use a fresh build/install workspace
-so the retired wonik_cobot_v2_* packages are not left on the overlay path.
-
-Source install/setup.bash in each new terminal. Gazebo Classic 11 is deliberately retained
-for parity with the original simulation. The project does not require a ROS 1 installation or bridge.
-
-## Run the existing hall mission
-
-Run these in three separate sourced terminals:
-
-```bash
-# 1: simulator, robot, joint controllers and EKF
-ros2 launch wonik_gazebo cobot_v2.launch.py world:=wonik_hall rviz:=false
-
-# 2: localization, Nav2, zones, obstacle detector and command gate
-ros2 launch wonik_navigation navigation.launch.py
-
-# 3: U route (0,0) -> (12,0) -> (12,6) -> (0,6)
-ros2 launch wonik_navigation route.launch.py
-```
-
-For SD, use these in the same three-terminal arrangement:
-
-```bash
-ros2 launch wonik_gazebo sd.launch.py world:=wonik_hall rviz:=false
-ros2 launch wonik_navigation navigation.launch.py robot:=sd
-ros2 launch wonik_navigation route.launch.py
-```
-
-Pass robot:=sd to mapping.launch.py or localization.launch.py as well. The shared
-sim.launch.py and bringup base.launch.py also accept robot:=cobot_v2|sd.
-SD has no sideways motion; its StopGo goal adjustment follows the current heading.
-
-For a headless display use gui:=false rviz:=false on the simulator and rviz:=false on navigation.
-A depth camera still requires rendering; the Docker helpers start Xvfb automatically.
-On native Linux without X, start Xvfb and set DISPLAY, or explicitly set depth_camera:=false
-**on both** simulator and navigation launches to run with LiDAR only.
-
-The empty world is the simulator default. Other simulator options:
-sim_drive:=kinematic (default), sim_drive:=physics, ekf:=false, lidar_gpu:=true,
-world_file:=/absolute/path.world, x:=0.0 y:=0.0 yaw:=0.0.
-When changing the spawn pose, give navigation the same x/y/yaw for AMCL initialization.
-The test worlds and mesh search paths resolve locally without downloading Gazebo models.
-
-Navigation options include map:=wonik_hall, map_file:=/absolute/path.yaml, zones:=wonik_hall.
-Route options include route:=wonik_hall_u, route_file:=/absolute/path.yaml,
-controller:=stop_go or stop_go_slow. Custom route files contain frame_id and waypoints.
-
-```bash
-# Manual mode selection while the route supervisor is running
-ros2 topic pub --once /route_supervisor/mode std_msgs/msg/String "{data: stop_go}"
-ros2 topic pub --once /route_supervisor/mode std_msgs/msg/String "{data: avoid}"
-ros2 topic pub --once /route_supervisor/mode std_msgs/msg/String "{data: auto}"
-
-# Change the route-following controller
-ros2 topic pub --once /route_supervisor/controller std_msgs/msg/String "{data: stop_go_slow}"
-
-# Manual driving: use only when autonomous route execution is stopped
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=cmd_vel_raw
-```
-
-RViz shows the map, route, plans, zones and detection box. Use 2D Pose Estimate for localization.
-Missions are started by route.launch.py; a free-space RViz goal is not a route command.
-
-## Fault injection
-
-Stop the mission and simulator first, then run the dedicated cobot_v2 empty-world bench in two terminals:
-
-~~~bash
+# Separate empty-world bench, with the normal simulator and mission stopped
 ros2 launch wonik_gazebo fault_injection.launch.py
+# Another terminal
 ros2 run wonik_gazebo fault_injection.py all
-~~~
+```
 
-Individual cases: b1 feedback loss, b2 command loss, c unresponsive drive controller,
-h invalid/stale joint states, d side obstacle during rotation, g low obstacle followed by camera loss.
-The runner prints measurements and PASS/FAIL and returns a nonzero exit code on failure.
-It restores controllers and the camera relay and removes its obstacles on exit.
-The default is headless; rendering still needs a display (Docker supplies Xvfb).
-Use gui:=true for the Gazebo window.
+The test suites cover kinematics, collision checks, detector/gate policy and Nav2 action integration. The Gazebo bench covers feedback loss, command loss, an unresponsive drive, invalid feedback, side obstacles during rotation and depth-camera loss. See [safety behaviour](docs/safety.md) for details.
 
-The detector publishes /obstacle_distances (Float32MultiArray): front, front-left, left, rear-left,
-rear, rear-right, right, front-right. The gate selects the directions of translation and computes
-a protective distance using the faster of the current and last output command speeds, with
-dec=0.5 m/s^2, latency=0.3 s and margin=0.3 m. These are cmd_vel_gate ROS parameters.
-The detector also publishes /obstacle_turn_clearance: [counterclockwise, clockwise] clearance in radians,
-computed from the same footprint polygon as Nav2. The gate compares this with a stopping angle
-using dec_theta=0.5 rad/s^2 and margin_theta=0.15 rad. Infinity means clear within the checked sweep.
-The legacy /obstacle_detected Boolean remains available for display.
+## Docker
 
-See [safety behaviour](docs/safety.md) for timeout, collision-check and fault-reset details.
-
-## Mapping
-
-Start the simulator in the hall, then run mapping instead of navigation/localization:
+The image includes ROS 2 Humble, Gazebo 11 and the project dependencies. Build artifacts stay in the `rci_wonik_humble_ws` volume; the source directory is mounted into `/ros2_ws/src/RCI_wonik_robotics2`.
 
 ```bash
-ros2 launch wonik_navigation mapping.launch.py
-ros2 run teleop_twist_keyboard teleop_twist_keyboard
-ros2 run nav2_map_server map_saver_cli -f /absolute/output/map
-```
-
-The mapping launch supplies the body-point filter, cloud-to-scan conversion and slam_toolbox.
-The teleop command above addresses the base directly; the navigation command gate is not launched
-during this mapping-only session. Localization alone is available through localization.launch.py.
-
-## Docker on Windows / Linux
-
-From the RCI_wonik_robotics2 directory. If PowerShell blocks local scripts, use
-powershell -NoProfile -ExecutionPolicy Bypass -File docker/run.ps1 followed by the same arguments;
-this applies only to that process.
-
-```powershell
+git clone --branch humble-devel --single-branch https://github.com/RCILab/RCI_wonik_robotics.git RCI_wonik_robotics2
+cd RCI_wonik_robotics2
 docker build -t rci_wonik_humble:latest docker
-.\docker\run.ps1 colcon build --symlink-install --parallel-workers 2
-.\docker\run.ps1 colcon test --executor sequential
-.\docker\run.ps1 colcon test-result --verbose
+bash docker/run.sh colcon build --symlink-install --parallel-workers 2
+bash docker/run.sh ros2 launch wonik_gazebo cobot_v2.launch.py world:=wonik_hall rviz:=false
+# Separate terminals
+bash docker/run.sh ros2 launch wonik_navigation navigation.launch.py
+bash docker/run.sh ros2 launch wonik_navigation route.launch.py
 ```
 
-Then use three PowerShell terminals:
+On Windows with Docker Desktop, use PowerShell:
 
 ```powershell
-.\docker\run.ps1 ros2 launch wonik_gazebo cobot_v2.launch.py world:=wonik_hall gui:=false rviz:=false
-.\docker\run.ps1 ros2 launch wonik_navigation navigation.launch.py rviz:=false
+.\docker\run.ps1 colcon build --symlink-install --parallel-workers 2
+.\docker\run.ps1 ros2 launch wonik_gazebo sd.launch.py world:=wonik_hall gui:=false rviz:=false
+# Separate terminals
+.\docker\run.ps1 ros2 launch wonik_navigation navigation.launch.py robot:=sd rviz:=false
 .\docker\run.ps1 ros2 launch wonik_navigation route.launch.py
 ```
 
-On Linux / WSL, use bash docker/run.sh with the same arguments.
-The Bash helper forwards an existing X11/WSLg display; the PowerShell helper uses a headless display.
-All helper terminals share the persistent container rci_wonik_humble, so Docker Desktop
-does not need cross-container DDS discovery. Build artifacts stay in volume rci_wonik_humble_ws.
-The source is a live bind mount. IMAGE, CONTAINER and ROS_DOMAIN_ID can be set before first creation.
-The default domain is 42. Changing image, mount or display settings requires recreating the container.
-Use docker stop rci_wonik_humble to stop the session; the build volume remains.
-
-## Active configuration and hardware boundary
-
-| File | Purpose |
-| --- | --- |
-| `wonik_cobot_description/config/<robot>/geometry.yaml` | Module locations, wheel size, joints and body geometry |
-| `wonik_cobot_bringup/config/<robot>/kinematics.yaml` | Limits, alignment, timeouts and fault handling |
-| `wonik_cobot_bringup/config/<robot>/controllers.yaml` | ros2_control joints and controller types |
-| `wonik_cobot_bringup/config/<robot>/ekf.yaml` | Wheel/IMU fusion |
-| `wonik_navigation/config/navigation.yaml` | Common Nav2 costmaps, plugin IDs and goal/progress checks |
-| `wonik_navigation/config/<robot>/stop_go.yaml and avoid.yaml` | Robot-specific planner tuning, including holonomic adjustment |
-| `wonik_navigation/config/<robot>/footprint.yaml` | Shared polygon for Nav2 and turn-clearance checks |
-| `wonik_navigation/config/<robot>/self_filter.yaml` | LiDAR body-point removal bounds |
-| `wonik_navigation/config/<robot>/obstacle_detector.yaml` | Required sensors, freshness and detection regions |
-| `wonik_navigation/config/routes and config/zones` | Route vertices and zone polygons |
-
-MBF is replaced by Nav2; launch merges common navigation.yaml with the selected robot configuration.
-StopGo may wait behind an obstacle indefinitely; RouteProgressChecker intentionally preserves this
-behavior. SettledGoalChecker enforces the configured pose tolerance and stopped hold time.
-
-Command flow:
-
-```text
-Nav2 controller -> /cmd_vel_raw -> cmd_vel_gate -> /cmd_vel
-  -> qd_kinematics -> /steer_controller/commands (rad)
-                   -> /drive_controller/commands (rad/s)
-joint_states -> wheel/odom -> EKF (+ /imu/data) -> /odom and odom -> base_footprint TF
-AMCL or SLAM -> map -> odom TF
-```
-
-The two command arrays follow geometry.yaml joint order. Both feedback position and velocity
-must be supplied with measurement timestamps. Joint controller command topics have the ROS 2
-plural suffix /commands. Raw LiDAR is /points, body-filtered LiDAR is /points_self_filtered,
-and depth is /camera/depth/points. Scan projection and the detector consume the filtered LiDAR.
-
-For hardware, provide the ros2_control SystemInterface (or a driver exposing the same commands
-and joint_states), actual sensor drivers, and controller-manager startup. base.launch.py accepts
-hardware_plugin and use_sim_time:=false; it does not itself start hardware controller_manager.
-Use use_sim_time:=false for navigation and route as well.
-Gazebo-only plugins are confined to the description/simulator; the planner and kinematics core
-have no Gazebo API dependency. Physical steering/braking/slip commissioning remains a hardware task.
-
-```bash
-ros2 topic echo /kinematics_node/fault --qos-durability transient_local
-ros2 service call /kinematics_node/clear_fault std_srvs/srv/Trigger "{}"
-ros2 topic echo /cmd_vel_gate/reason
-ros2 topic echo /obstacle_detector/status
-```
-
-Fault reset requires fresh feedback and returns through the stop/align sequence.
-
-## Validation
-
-See [Humble QD/SD validation](docs/humble-sd-validation.md) for builds, tests, mission and fault-injection results.
-The latest ROS 1 package reorganization, SD model, turn-clearance checks and conditional detours are included.
-The existing GIFs under docs/gifs are inherited ROS 1 demonstrations.
+- The helpers share the `rci_wonik_humble` container and ROS domain 42. Running a helper without arguments opens a shell.
+- The Bash helper forwards an X11/WSLg display. The PowerShell helper uses Xvfb for headless rendering.
+- If PowerShell blocks scripts, use `powershell -NoProfile -ExecutionPolicy Bypass -File docker/run.ps1` followed by the same arguments.
+- `docker stop rci_wonik_humble` stops the session and retains the build volume.
 
 ## Contact
 
