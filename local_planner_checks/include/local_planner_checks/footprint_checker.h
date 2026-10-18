@@ -1,6 +1,7 @@
 #ifndef LOCAL_PLANNER_CHECKS_FOOTPRINT_CHECKER_H_
 #define LOCAL_PLANNER_CHECKS_FOOTPRINT_CHECKER_H_
 
+#include <array>
 #include <vector>
 
 #include <nav2_costmap_2d/costmap_2d.hpp>
@@ -45,6 +46,8 @@ struct CheckResult
 // collisions the same way. Every check covers the whole footprint polygon (not just its outline) at
 // the start pose, at the end pose and at intermediate poses spaced so that no footprint point moves
 // more than half a costmap cell between two of them (the corners of a turning rectangle included).
+// The footprint may be any simple polygon in the robot frame, convex or not (e.g. a pallet truck's body
+// and fork), and need not be centred on the robot frame origin, about which the robot turns.
 // The caller holds the costmap mutex.
 class FootprintChecker
 {
@@ -70,10 +73,17 @@ class FootprintChecker
     }
 
   private:
+    // Cells covered by the polygon (map cell corners `polygon`, the same vertices in continuous map
+    // coordinates `vertices`): the outline cells and every cell whose centre lies inside.
+    void fillPolygon(const std::vector<nav2_costmap_2d::MapLocation> &polygon,
+                     const std::vector<std::array<double, 2>> &vertices,
+                     std::vector<nav2_costmap_2d::MapLocation> &cells) const;
+
     nav2_costmap_2d::Costmap2D &m_costmap;
     std::vector<geometry_msgs::msg::Point> m_footprint;
     double m_radius = 0;
     double m_step = 0; // [m] largest allowed motion of a footprint point between two checked poses
+    bool m_convex = true; // convex footprints use costmap_2d's faster convex fill
 };
 
 // Distance the robot needs to stop: it keeps max(|v_measured|, |v_command|) for `latency` [s], then

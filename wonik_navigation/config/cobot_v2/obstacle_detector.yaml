@@ -1,18 +1,18 @@
 # Obstacle detector for cobot_v2 (base_footprint): distances to the nearest obstacle in 8 corridors
 # around the body (0.1 m wider than the body, 3 m long), which cmd_vel_gate compares with the stopping
-# distance at the current speed; obstacle heights from just above the floor to the top of the lift
-# column (box z_min/z_max). The front box (1.5 m from the bumper) only sets obstacle_detected, for RViz.
+# distance at the current speed, and the turn in place left each way before the footprint (footprint.yaml,
+# loaded by navigation.launch.py) touches an obstacle; obstacle heights from just above the floor to the top
+# of the lift column (box z_min/z_max). The front box (1.5 m from the bumper) only sets
+# obstacle_detected, for RViz.
+# The LiDAR cloud comes without the robot's own points (scan.launch.py, self_filter.yaml); if the filter
+# stops, the cloud goes stale like the LiDAR itself.
 # Required sensors must deliver current data (measurement time within timeout) or the robot stops;
 # navigation.launch.py drops the depth camera from this list with depth_camera:=false (switched off on
 # purpose, not a failure).
-required_topics: [/points, /camera/depth/points]
+required_topics: [/points_self_filtered, /camera/depth/points]
 optional_topics: []
 base_frame: base_footprint
 box: {x_min: 0.45, x_max: 1.95, y_min: -0.45, y_max: 0.45, z_min: 0.06, z_max: 1.80}
-# Turning in place: the corners sweep a circle of 0.57 m (navigation.yaml); obstacle points within this
-# radius (outside the body, within the box heights) stop in-place turns at the gate.
-turn_radius: 0.70
-body: {x_min: -0.452, x_max: 0.452, y_min: -0.352, y_max: 0.352}
 side_margin: 0.1
 max_range: 3.0
 min_points: 5

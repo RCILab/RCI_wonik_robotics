@@ -1,0 +1,139 @@
+<?xml version="1.0"?>
+<!-- Gazebo-only part of the cobot_v2 model; included by cobot_v2.urdf.xacro and ignored outside
+     Gazebo. Uses the properties g (geometry.yaml) and wheel_r of the including file.
+       sim_drive:=kinematic  wheel and caster contacts are frictionless and the qd_kinematic_base plugin
+                             (wonik_gazebo) moves the base with the twist that the measured steer angles
+                             and wheel speeds imply. No slip; for SLAM and navigation work.
+       sim_drive:=physics    the wheels drive the base through contact friction, with the slip that
+                             brings. For checking the kinematics and wheel odometry. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="cobot_v2_gazebo" params="sim_drive depth_camera:=true">
+    <xacro:property name="kinematic" value="${sim_drive == 'kinematic'}"/>
+    <xacro:if value="${sim_drive not in ['kinematic', 'physics']}">
+      <xacro:unknown_sim_drive_use_kinematic_or_physics/>
+    </xacro:if>
+
+    <gazebo reference="base_link">
+      <material>Gazebo/Grey</material>
+    </gazebo>
+
+    <xacro:macro name="qd_unit_gazebo" params="name">
+      <gazebo reference="${name}_steer_link">
+        <material>Gazebo/Red</material>
+      </gazebo>
+      <gazebo reference="${name}_drive_link">
+        <xacro:if value="${kinematic}">
+          <mu1>0.0</mu1>
+          <mu2>0.0</mu2>
+        </xacro:if>
+        <xacro:unless value="${kinematic}">
+          <mu1>2.0</mu1>
+          <mu2>2.0</mu2>
+          <slip1>0.001</slip1>
+          <slip2>0.001</slip2>
+        </xacro:unless>
+      </gazebo>
+    </xacro:macro>
+    <xacro:macro name="qd_units_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['module_names'])}">
+        <xacro:qd_unit_gazebo name="${g['module_names'][i]}"/>
+        <xacro:qd_units_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:qd_units_gazebo/>
+
+    <xacro:macro name="omni_wheels_gazebo" params="i:=0">
+      <xacro:if value="${i &lt; len(g['omni_names'])}">
+        <gazebo reference="${g['omni_names'][i]}_omni_link">
+          <mu1>${0.0 if kinematic else 0.01}</mu1>
+          <mu2>${0.0 if kinematic else 0.01}</mu2>
+        </gazebo>
+        <xacro:omni_wheels_gazebo i="${i + 1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:omni_wheels_gazebo/>
+
+    <!-- Front depth camera: /camera/depth/points (frame camera_depth_optical_frame), 15 Hz, D435 FOV -->
+    <xacro:if value="${depth_camera}">
+      <gazebo reference="camera_link">
+        <sensor type="depth" name="depth_camera">
+          <always_on>true</always_on>
+          <update_rate>15</update_rate>
+          <camera>
+            <horizontal_fov>1.5184</horizontal_fov>
+            <image>
+              <format>R8G8B8</format>
+              <width>424</width>
+              <height>240</height>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>10.0</far>
+            </clip>
+          </camera>
+          <plugin name="depth_camera_controller" filename="libgazebo_ros_camera.so">
+            <ros>
+              <namespace>/camera</namespace>
+              <remapping>camera/points:=depth/points</remapping>
+              <remapping>camera/image_raw:=rgb/image_raw</remapping>
+              <remapping>camera/camera_info:=rgb/camera_info</remapping>
+              <remapping>camera/depth/image_raw:=depth/image_raw</remapping>
+              <remapping>camera/depth/camera_info:=depth/camera_info</remapping>
+            </ros>
+            <camera_name>camera</camera_name><frame_name>camera_depth_optical_frame</frame_name>
+            <min_depth>0.1</min_depth><max_depth>6.0</max_depth>
+          </plugin>
+        </sensor>
+      </gazebo>
+    </xacro:if>
+
+    <!-- IMU: /imu/data (frame imu_link) at 200 Hz. The noise is a typical MEMS gyro (0.005 rad/s) and
+         also sets the message covariances (noise^2). No bias: robot_localization does not estimate one,
+         so a real gyro needs its bias removed by the driver (e.g. calibrated at standstill). -->
+    <gazebo reference="imu_link">
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>200</update_rate>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0</mean><stddev>0.005</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0</mean><stddev>0.005</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0</mean><stddev>0.005</stddev></noise></z>
+          </angular_velocity>
+        </imu>
+        <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+          <ros><remapping>~/out:=/imu/data</remapping></ros>
+          <frame_name>imu_link</frame_name><initial_orientation_as_reference>false</initial_orientation_as_reference>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+    <gazebo>
+      <!-- Steer joints: position, drive joints: velocity (as on the real drive units). -->
+      <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+        <parameters>$(find wonik_cobot_bringup)/config/cobot_v2/controllers.yaml</parameters>
+      </plugin>
+
+      <!-- Ground truth of base_footprint for evaluation: /ground_truth/odom in frame world, no TF. -->
+      <plugin name="ground_truth" filename="libgazebo_ros_p3d.so">
+        <ros><remapping>odom:=/ground_truth/odom</remapping></ros>
+        <update_rate>50.0</update_rate><body_name>base_footprint</body_name>
+        <frame_name>world</frame_name><gaussian_noise>0.0</gaussian_noise>
+      </plugin>
+
+      <xacro:if value="${kinematic}">
+        <plugin name="qd_kinematic_base" filename="libqd_kinematic_base.so">
+          <driveType>${g['drive_type']}</driveType>
+          <moduleX>${' '.join([str(v) for v in g['module_x']])}</moduleX>
+          <moduleY>${' '.join([str(v) for v in g['module_y']])}</moduleY>
+          <fixedAxleX>${g['fixed_axle_x'] if 'fixed_axle_x' in g else 0.0}</fixedAxleX>
+          <wheelRadius>${wheel_r}</wheelRadius>
+          <steerJoints>${' '.join(g['steer_joints'])}</steerJoints>
+          <driveJoints>${' '.join(g['drive_joints'])}</driveJoints>
+        </plugin>
+      </xacro:if>
+    </gazebo>
+  </xacro:macro>
+
+</robot>

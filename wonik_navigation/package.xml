@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>wonik_navigation</name><version>0.3.0</version>
-  <description>Wonik QD robot: ROS 2 Humble wonik navigation.</description>
+  <description>Wonik QD and SD robots: ROS 2 Humble wonik navigation.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -14,6 +14,7 @@
   <exec_depend>tf_transformations</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>map_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>

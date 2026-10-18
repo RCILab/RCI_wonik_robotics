@@ -4,6 +4,9 @@
 FOLLOW -> AVOID_PREP -> AVOID -> FOLLOW, with AVOID_HOLD on a failed running detour.
 Only feedback from the current accepted detour opens the gate. Planning and goal
 acceptance are asynchronous: deadlines and safety heartbeats keep running.
+In auto mode a clear avoid zone stays on the route. Costmap obstacles trigger an
+early detour/rejoin; running detours replan only when the avoid controller blocks.
+Handover requires both route proximity and heading alignment.
 """
 import math
 import yaml
@@ -13,11 +16,13 @@ from rclpy.action import ActionClient
 from action_msgs.msg import GoalStatus
 import tf2_ros
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Path
+from nav_msgs.msg import OccupancyGrid, Path
+from map_msgs.msg import OccupancyGridUpdate
 from nav2_msgs.action import FollowPath, ComputePathToPose
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from tf_transformations import quaternion_from_euler
 from wonik_navigation.ros_node import ManagedNode, latched_qos, spin_node
+from wonik_navigation.route import GridView, blocked_indices, last_in
 from wonik_navigation.zones import inside, load_zones
 
 SPACING = 0.05
@@ -55,7 +60,7 @@ class RouteSupervisor(ManagedNode):
         self.avoid_zones = [z for z in load_zones(zones_file)[1] if z["type"] == "avoid"] if zones_file else []
         for key, value in dict(controller="stop_go", avoid_controller="avoid", planner="global_planner",
                                replan_period=1.0, plan_timeout=2.0, zone_timeout=1.0,
-                               rejoin_margin=1.0, rejoin_tail=1.5).items():
+                               rejoin_margin=1.0, rejoin_tail=2.5, rejoin_clear_radius=0.6, handover_yaw_tolerance=0.17).items():
             setattr(self, key, self.param(key, value))
         self.state, self.mode = "FOLLOW", "auto"
         self.zone = ("none", None)
@@ -67,6 +72,17 @@ class RouteSupervisor(ManagedNode):
         self.goal_handle = self.plan_handle = None
         self.plan_pending = False
         self.started = self.done = False
+        self.points = [(p.pose.position.x, p.pose.position.y) for p in self.path.poses]
+        self.zone_points = [k for k, (x, y) in enumerate(self.points)
+                            if any(inside(x, y, z["polygon"]) for z in self.avoid_zones)]
+        self.grid = None
+        self.blocked = None
+        self.avoid_blocked = (False, None)
+        costmap = self.param("costmap", "/global_costmap/costmap")
+        self.create_subscription(OccupancyGrid, costmap, self.on_costmap, latched_qos())
+        self.create_subscription(OccupancyGridUpdate, costmap + "_updates", self.on_costmap_update, 10)
+        self.create_subscription(Bool, "/controller_server/" + self.avoid_controller + "/blocked",
+                                 self.on_avoid_blocked, latched_qos())
         self.tf = tf2_ros.Buffer(node=self)
         self.tf_listener = tf2_ros.TransformListener(self.tf, self)
         self.route_pub = self.create_publisher(Path, "~/route_path", latched_qos())
@@ -80,9 +96,15 @@ class RouteSupervisor(ManagedNode):
         self.route_pub.publish(self.path)
         self.create_timer(0.1, self.tick)
 
-    def robot_xy(self):
+    def robot_pose(self):
         t = self.tf.lookup_transform(self.path.header.frame_id, "base_footprint", Time())
-        return t.transform.translation.x, t.transform.translation.y
+        q = t.transform.rotation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        return t.transform.translation.x, t.transform.translation.y, yaw
+
+    def robot_xy(self):
+        return self.robot_pose()[:2]
+
 
     def robot_index(self, from_index):
         """Index of the route pose closest to the robot, searched forward from from_index."""
@@ -91,8 +113,8 @@ class RouteSupervisor(ManagedNode):
         return min(range(from_index, len(poses)),
                    key=lambda i: (poses[i].pose.position.x - x) ** 2 + (poses[i].pose.position.y - y) ** 2)
 
-    def exit_index(self, index):
-        """First route index after the avoid zone around route index 'index', plus rejoin_margin."""
+    def zone_exit(self, index):
+        """First route index after the avoid zone around route index 'index'."""
         poses = self.path.poses
         zone = next((z for z in self.avoid_zones
                      if inside(poses[index].pose.position.x, poses[index].pose.position.y, z["polygon"])), None)
@@ -100,7 +122,24 @@ class RouteSupervisor(ManagedNode):
         if zone is not None:
             while i < len(poses) - 1 and inside(poses[i].pose.position.x, poses[i].pose.position.y, zone["polygon"]):
                 i += 1
-        return min(i + int(round(self.rejoin_margin / SPACING)), len(poses) - 1)
+        return i
+
+    def rejoin_after(self, index):
+        """Route index the detour from route index 'index' rejoins at: rejoin_margin past the obstacle on the
+        route in the avoid zone, or past the zone exit when the costmap shows no obstacle on it."""
+        last = len(self.path.poses) - 1
+        if self.mode == "avoid":
+            return last
+        exit_index = self.zone_exit(index)
+        blocked = last_in(self.blocked or [], index, exit_index)
+        base = exit_index if blocked is None else blocked
+        return min(base + int(round(self.rejoin_margin / SPACING)), last)
+
+    def set_rejoin(self, index):
+        last = len(self.path.poses) - 1
+        self.rejoin_index = index
+        self.handover_index = min(self.rejoin_index + int(round(0.5 * self.rejoin_tail / SPACING)), last)
+
 
     def current_zone(self):
         ztype, stamp = self.zone
@@ -109,7 +148,15 @@ class RouteSupervisor(ManagedNode):
         return ztype
 
     def want_avoid(self):
-        return self.mode == "avoid" or (self.mode == "auto" and self.current_zone() == "avoid" and bool(self.avoid_zones))
+        if self.mode == "avoid":
+            return True
+        if not (self.mode == "auto" and self.current_zone() == "avoid" and self.avoid_zones):
+            return False
+        if self.blocked is None:
+            return True  # no costmap: the whole avoid zone is a detour
+        index = self.robot_index(self.start_index)
+        return last_in(self.blocked, index, self.zone_exit(index)) is not None
+
 
     def set_state(self, state):
         if state != self.state:
@@ -170,15 +217,21 @@ class RouteSupervisor(ManagedNode):
 
     def start_avoid(self):
         index = self.robot_index(self.start_index)
-        last = len(self.path.poses) - 1
-        self.rejoin_index = last if self.mode == "avoid" else self.exit_index(index)
-        self.handover_index = min(self.rejoin_index + int(round(0.5 * self.rejoin_tail / SPACING)), last)
+        self.set_rejoin(self.rejoin_after(index))
+        self.info("avoidance from route index %d, rejoin at index %d, hand over at index %d",
+                      index, self.rejoin_index, self.handover_index)
         self.set_state("AVOID_PREP")
         self.try_detour()
+
 
     def try_detour(self):
         if self.plan_pending or not self.get_path.server_is_ready():
             return
+        if self.state in ("AVOID", "AVOID_HOLD"):
+            rejoin = max(self.rejoin_after(self.robot_index(self.start_index)), self.rejoin_index)
+            if rejoin != self.rejoin_index:
+                self.set_rejoin(rejoin)
+                self.info("rejoin moved to index %d, hand over at index %d", self.rejoin_index, self.handover_index)
         self.last_plan = self.seconds()
         self.plan_pending = True
         self.plan_seq += 1
@@ -258,16 +311,47 @@ class RouteSupervisor(ManagedNode):
                 if self.mode == "stop_go":
                     self.follow(self.robot_index(self.start_index))
                     return
+                now = self.seconds()
                 if self.state == "AVOID":
-                    x, y = self.robot_xy()
-                    p = self.path.poses[self.handover_index].pose.position
-                    if math.hypot(p.x - x, p.y - y) < 0.35:
-                        self.follow(self.robot_index(self.rejoin_index))
+                    x, y, yaw = self.robot_pose()
+                    k = self.robot_index(self.handover_index)
+                    on_route = self.path.poses[k].pose
+                    q = on_route.orientation
+                    route_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+                    off = abs(math.atan2(math.sin(yaw - route_yaw), math.cos(yaw - route_yaw)))
+                    if (math.hypot(on_route.position.x - x, on_route.position.y - y) < 0.35 and
+                            off <= self.handover_yaw_tolerance):
+                        self.follow(k)
                         return
-                if self.seconds() - self.last_plan >= self.replan_period:
+                    blocked, since = self.avoid_blocked
+                    if blocked and now - since >= self.replan_period and now - self.last_plan >= self.replan_period:
+                        self.info("the detour is blocked: replanning")
+                        self.try_detour()
+                elif now - self.last_plan >= self.replan_period:
                     self.try_detour()
         except tf2_ros.TransformException as exc:
             self.warn_throttle(5.0, "no robot pose: %s", exc)
+
+    def on_costmap(self, msg):
+        self.grid = GridView.from_msg(msg)
+        self.grid.data = list(self.grid.data)
+        self.update_blocked()
+
+    def on_costmap_update(self, msg):
+        g = self.grid
+        if g is None or msg.x + msg.width > g.width or msg.y + msg.height > g.height:
+            return  # no full grid yet, or one of another size: wait for the next full grid
+        for row in range(msg.height):
+            start = (msg.y + row) * g.width + msg.x
+            g.data[start:start + msg.width] = msg.data[row * msg.width:(row + 1) * msg.width]
+        self.update_blocked()
+
+    def update_blocked(self):
+        self.blocked = blocked_indices(self.points, self.grid, self.zone_points, self.rejoin_clear_radius)
+
+    def on_avoid_blocked(self, msg):
+        if msg.data != self.avoid_blocked[0]:
+            self.avoid_blocked = (msg.data, self.seconds())
 
     def on_zone(self, msg):
         self.zone = (msg.data, self.seconds())

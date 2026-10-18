@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>wonik_gazebo</name><version>0.3.0</version>
-  <description>Wonik QD robot: ROS 2 Humble wonik gazebo.</description>
+  <description>Wonik QD and SD robots: ROS 2 Humble wonik gazebo.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -9,7 +9,7 @@
   <depend>gazebo_dev</depend>
   <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>gazebo_ros2_control</exec_depend>
-  <exec_depend>wonik_cobot_v2_bringup</exec_depend>
+  <exec_depend>wonik_cobot_bringup</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>std_srvs</exec_depend>

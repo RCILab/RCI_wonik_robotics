@@ -1,0 +1,71 @@
+# stop_go_local_planner for cobot_v2 (parameter names follow neo_local_planner).
+# Keep acc/dec below the base's limits (wonik_cobot_bringup/config/cobot_v2/kinematics.yaml: linear_acc,
+# linear_dec) so the base can follow the braking profile and stops where it should.
+stop_go:
+  max_vel_x: 1.0
+  min_trans_vel: 0.05
+  acc_lim_x: 0.3
+  dec_lim_x: 0.3
+  max_rot_vel: 0.6
+  min_rot_vel: 0.05
+  acc_lim_theta: 0.6
+  trans_acc_lim_theta: 0.4
+  low_pass_gain: 0.5
+  # Curvature rate limit: the base stops and re-steers when a steering target jumps by more than
+  # 2 deg (qd_kinematics), also when a new path is handed over while driving. drive units 0.2 m from the turning centre: 2.0 /(m s) moves their steering by
+  # under 1.2 deg per 50 ms control step
+  max_curvature_rate: 2.0
+  lookahead_dist: 0.8
+  start_yaw_error: 0.26      # 15 deg
+  corner_angle: 0.17         # 10 deg
+  xy_goal_tolerance: 0.03
+  yaw_goal_tolerance: 0.02
+  trans_stopped_vel: 0.02
+  rot_stopped_vel: 0.02
+  goal_tune_time: 0.3
+  # safety (local_planner_checks): stale odometry fails the controller; commands are checked on the
+  # local costmap over the stopping distance (reaction time + braking at dec_lim_x + margin)
+  odom_timeout: 0.5
+  collision_latency: 0.3
+  collision_margin: 0.1
+  rotation_margin: 0.1
+  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out in any
+  # direction at adjust_vel (holonomic base), farther approached again as a new segment
+  holonomic: true
+  adjust_max_dist: 0.3
+  adjust_vel: 0.1
+
+# Same follower, speed-limited (e.g. a slow zone)
+stop_go_slow:
+  max_vel_x: 0.3
+  min_trans_vel: 0.05
+  acc_lim_x: 0.3
+  dec_lim_x: 0.3
+  max_rot_vel: 0.3
+  min_rot_vel: 0.05
+  acc_lim_theta: 0.6
+  trans_acc_lim_theta: 0.4
+  low_pass_gain: 0.5
+  # Curvature rate limit: the base stops and re-steers when a steering target jumps by more than
+  # 2 deg (qd_kinematics), also when a new path is handed over while driving. drive units 0.2 m from the turning centre: 2.0 /(m s) moves their steering by
+  # under 1.2 deg per 50 ms control step
+  max_curvature_rate: 2.0
+  lookahead_dist: 0.8
+  start_yaw_error: 0.26
+  corner_angle: 0.17
+  xy_goal_tolerance: 0.03
+  yaw_goal_tolerance: 0.02
+  trans_stopped_vel: 0.02
+  rot_stopped_vel: 0.02
+  goal_tune_time: 0.3
+  # safety (local_planner_checks): stale odometry fails the controller; commands are checked on the
+  # local costmap over the stopping distance (reaction time + braking at dec_lim_x + margin)
+  odom_timeout: 0.5
+  collision_latency: 0.3
+  collision_margin: 0.1
+  rotation_margin: 0.1
+  # a segment end missed by more than xy_goal_tolerance: up to adjust_max_dist driven out in any
+  # direction at adjust_vel (holonomic base), farther approached again as a new segment
+  holonomic: true
+  adjust_max_dist: 0.3
+  adjust_vel: 0.1

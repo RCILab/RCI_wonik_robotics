@@ -1,0 +1,3 @@
+# cobot_v2 body (864 x 664 mm) plus 2 cm, in base_footprint (the turning centre). navigation.launch.py
+# loads it into both costmaps (the controllers' collision checks) and the obstacle detector.
+footprint: [[0.452, 0.352], [0.452, -0.352], [-0.452, -0.352], [-0.452, 0.352]]

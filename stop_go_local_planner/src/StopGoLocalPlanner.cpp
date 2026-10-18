@@ -188,8 +188,9 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
                                                         m_limits.trans_stopped_vel);
     const double xy_tol = m_limits.xy_goal_tolerance;
 
-    // A segment end missed by more than the tolerance: drive the rest sideways if it is small (and the
-    // base can), otherwise approach the end again from here as a new segment.
+    // A segment end missed by more than the tolerance and by little: drive the rest out without turning
+    // (ADJUSTING), sideways too if the base can; otherwise approach the end again from here as a new
+    // segment.
     auto approach_again = [&](double dist) {
         tf2::Vector3 here = global_to_local.inverse() * pos;
         here.setZ(0);
@@ -198,17 +199,7 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
         RCLCPP_WARN(m_node->get_logger(), "%.2f m off the end of segment %zu: approaching it again", dist,
                        m_segment + 1);
     };
-    auto missed = [&](double dist) {
-        if (m_holonomic && dist <= m_adjust_max_dist)
-        {
-            m_state = STATE_ADJUSTING;
-            RCLCPP_INFO(m_node->get_logger(), "%.3f m off the end of segment %zu: adjusting", dist, m_segment + 1);
-        }
-        else
-        {
-            approach_again(dist);
-        }
-    };
+    const tf2::Transform robot_pose(createQuaternionFromYaw(yaw), pos);
 
     // current segment in the local frame (recomputed after approach_again() changed its start)
     tf2::Vector3 seg_start, seg_end, seg_dir;
@@ -232,6 +223,27 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
         dist_end = (seg_end - pos).length();
     };
     update_segment();
+
+    // The part of the way to the segment end the base can drive without turning, in the robot frame: all
+    // of it on a holonomic base, only the part along its heading otherwise (forward or backward).
+    auto drivable = [&]() {
+        const tf2::Vector3 target = robot_pose.inverse() * seg_end;
+        return tf2::Vector3(target.x(), m_holonomic ? target.y() : 0.0, 0.0);
+    };
+    auto missed = [&](double dist) {
+        // a non-holonomic base can drive a miss out only if what is left beside it is within tolerance
+        const double beside = (robot_pose.inverse() * seg_end).y();
+        if (dist <= m_adjust_max_dist && (m_holonomic || std::fabs(beside) <= xy_tol))
+        {
+            m_state = STATE_ADJUSTING;
+            RCLCPP_INFO(m_node->get_logger(), "%.3f m off the end of segment %zu: adjusting%s", dist,
+                           m_segment + 1, m_holonomic ? "" : " along the heading");
+        }
+        else
+        {
+            approach_again(dist);
+        }
+    };
 
     // A plan handed over at a corner (e.g. a controller switch while turning there) starts with the stub
     // of the leg the robot has just finished: skip it instead of turning back to it. (A short first
@@ -333,48 +345,64 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
         }
         else
         {
-            // pure pursuit on the current segment
-            const double lookahead = std::min(std::max(along, 0.0) + m_lookahead_dist, seg_len);
+            // pure pursuit on the current segment's line. The target stays a full lookahead ahead, past the
+            // segment end if need be (the speed profile does the stopping): a target closing in on the robot
+            // would turn a centimetre of offset into a large curvature, and steering, before every stop.
+            const double lookahead = std::max(along, 0.0) + m_lookahead_dist;
             const tf2::Vector3 target_pos = seg_start + seg_dir * lookahead;
-            const tf2::Vector3 local_target =
-                tf2::Transform(createQuaternionFromYaw(yaw), pos).inverse() * target_pos;
+            const tf2::Vector3 local_target = robot_pose.inverse() * target_pos;
             const double dist_sq = local_target.x() * local_target.x() + local_target.y() * local_target.y();
-            const double curvature = dist_sq > 1e-6 ? 2 * local_target.y() / dist_sq : 0;
+            double curvature = dist_sq > 1e-6 ? 2 * local_target.y() / dist_sq : 0;
 
             // speed: braking profile toward the segment end, never below min_vel_trans before it
             const double profile = std::sqrt(2 * m_dec_lim_x * std::max(remaining, 0.0));
             planned_speed = std::max(std::min(profile, m_limits.max_vel_x), m_limits.min_vel_trans);
             control_vel_x = std::min(planned_speed, m_last_cmd_vel.linear.x + m_limits.acc_lim_x * dt);
 
-            // yaw rate = v * curvature, low passed and slew limited: a step in the yaw rate re-steers
-            // the drive units, which the base answers with a stop-steer-go cycle.
+            // The drive units' steering angles follow the curvature of the motion, not the yaw rate, so
+            // the curvature is low passed and rate limited (max_curvature_rate; the yaw rate v * curvature is
+            // slew limited on top): the steering then moves smoothly also while the speed changes and when a
+            // plan is handed over while driving. A steering step makes the base stop, re-steer and start
+            // again (stop-steer-go).
+            if (m_have_curvature)
+            {
+                curvature = curvature * m_low_pass_gain + m_curvature * (1 - m_low_pass_gain);
+                curvature = slew(m_curvature, curvature, m_max_curvature_rate * dt);
+            }
+            m_curvature = curvature;
+            m_have_curvature = true;
             control_yawrate = control_vel_x * curvature;
-            control_yawrate =
-                control_yawrate * m_low_pass_gain + m_last_cmd_vel.angular.z * (1 - m_low_pass_gain);
             control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_trans_acc_lim_theta * dt);
         }
     }
     else if (m_state == STATE_ADJUSTING)
     {
+        const tf2::Vector3 way = drivable();
+        const double d = way.length();
         if (dist_end > m_adjust_max_dist)
         {
             approach_again(dist_end);
         }
-        else if (dist_end <= 0.5 * xy_tol)
+        else if (d <= 0.5 * xy_tol)
         {
             if (is_stopped)
             {
-                segment_done();
+                if (dist_end <= xy_tol)
+                {
+                    segment_done();
+                }
+                else
+                {
+                    approach_again(dist_end); // what is left beside the heading is out of tolerance
+                }
             }
         }
         else
         {
-            // straight to the segment end at low speed, without turning
-            const tf2::Vector3 local_target = tf2::Transform(createQuaternionFromYaw(yaw), pos).inverse() * seg_end;
-            const double d = std::hypot(local_target.x(), local_target.y());
-            planned_speed = std::min(std::max(dist_end, m_limits.min_vel_trans), m_adjust_vel);
-            control_vel_x = local_target.x() / d * planned_speed;
-            control_vel_y = local_target.y() / d * planned_speed;
+            // straight toward the segment end at low speed, without turning
+            planned_speed = std::min(std::max(d, m_limits.min_vel_trans), m_adjust_vel);
+            control_vel_x = way.x() / d * planned_speed;
+            control_vel_y = way.y() / d * planned_speed;
         }
     }
 
@@ -396,6 +424,10 @@ bool StopGoLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist &cmd_
     }
     cmd_vel = cmd;
     m_last_cmd_vel = cmd;
+    if (m_state != STATE_TRANSLATING || cmd.linear.x < 1e-3)
+    {
+        m_have_curvature = false; // stopping: the base re-aligns its steering before it drives again
+    }
 
     // publish the rest of the route (local frame) for visualization
     nav_msgs::msg::Path local_path;
@@ -492,12 +524,18 @@ bool StopGoLocalPlanner::setPlan(const std::vector<geometry_msgs::msg::PoseStamp
     // Start the slew limits from the current motion, so a plan handed over while driving (e.g. from
     // another controller) continues without a dip in speed.
     m_last_cmd_vel = geometry_msgs::msg::Twist();
+    m_have_curvature = false;
     {
         std::lock_guard<std::mutex> lock(m_odometry_mutex);
         if (m_odometry && odometryFresh(m_node->now()))
         {
             m_last_cmd_vel.linear.x = std::max(m_odometry->twist.twist.linear.x, 0.0);
             m_last_cmd_vel.angular.z = m_odometry->twist.twist.angular.z;
+            if (m_last_cmd_vel.linear.x > m_limits.trans_stopped_vel)
+            {
+                m_curvature = m_last_cmd_vel.angular.z / m_last_cmd_vel.linear.x; // the steering it has now
+                m_have_curvature = true;
+            }
         }
     }
     RCLCPP_INFO(m_node->get_logger(), "new plan: %zu poses, %zu segment(s)", plan.size(), m_vertices.size() - 1);
@@ -528,6 +566,7 @@ void StopGoLocalPlanner::configure(const rclcpp_lifecycle::LifecycleNode::WeakPt
     m_corner_angle = param<double>("corner_angle", 0.17);
     m_trans_acc_lim_theta = param<double>("trans_acc_lim_theta", 0.4);
     m_low_pass_gain = param<double>("low_pass_gain", 0.5);
+    m_max_curvature_rate = param<double>("max_curvature_rate", 1.0);
     m_goal_tune_time = param<double>("goal_tune_time", 0.3);
     m_holonomic = param<bool>("holonomic", true);
     m_adjust_max_dist = param<double>("adjust_max_dist", 0.3);

@@ -1,19 +1,26 @@
 # RCI_wonik_robotics2 - ROS 2 Humble
 
-ROS 2 Humble / Ubuntu 22.04 port of the reviewed Wonik QD AGV simulation.
+ROS 2 Humble / Ubuntu 22.04 port of the Wonik QD (cobot_v2) and SD AGV simulation.
+Latest ROS 1 source included: ae1bb3a (2026-10-18).
 Branch: **humble-devel**. The original ROS 1 working tree is separate and unchanged.
 This directory was created as a Git worktree: its Git metadata lives in the original repository,
 so keep that repository when moving or backing up this worktree.
-ROS package names are retained; only the project directory has the suffix **2**.
+The shared robot packages are **wonik_cobot_description** and **wonik_cobot_bringup**;
+per-robot files live under config/cobot_v2 and config/sd. Only the project directory has the suffix **2**.
 
 ## What is preserved
 
-- Two diagonally arranged steer/drive modules, shared geometry, forward/inverse kinematics.
+- QD: two diagonal steer/drive modules; SD: one steer/drive module and fixed fork rollers.
+- Shared geometry and forward/inverse kinematics; SD turning centre at the fork roller axle.
+- SD is a drawing-based virtual model made of primitives, pending the actual CAD.
 - Stop -> align -> creep -> drive control, feedback/command timeouts, latched fault and explicit reset.
 - Wheel odometry + IMU EKF; AMCL localization and slam_toolbox mapping.
-- StopGo route following and PurePursuit detours, stop/avoid zones, route rejoining.
-- Full-footprint collision checks, predicted PurePursuit yaw-rate transitions, 8-direction protective
-  fields with stopping distances, sensor freshness and NaN checks, and the final command gate.
+- StopGo route following and PurePursuit detours, stop/avoid zones and heading-aligned route rejoining.
+- Clear avoid zones stay on the route; obstacles trigger detours and an early return past the blockage.
+  Running detours replan only while blocked. Curvature smoothing avoids abrupt steering steps.
+- Convex/nonconvex swept-footprint checks, including off-centre SD rotations; predicted PurePursuit
+  yaw-rate transitions, 8-direction protective fields and direction-specific stopping angles.
+- LiDAR body-point removal, sensor freshness and NaN checks, and the final command gate.
 - Controller handover at corners skips the completed segment stub.
 - Six Gazebo fault-injection scenarios, including feedback loss and depth-camera loss.
 - Kinematic and contact-physics simulation modes, the hall/map/U route, LiDAR and depth camera.
@@ -35,6 +42,9 @@ colcon test --executor sequential
 colcon test-result --verbose
 ```
 
+For an existing checkout from before the package rename, use a fresh build/install workspace
+so the retired wonik_cobot_v2_* packages are not left on the overlay path.
+
 Source install/setup.bash in each new terminal. Gazebo Classic 11 is deliberately retained
 for parity with the original simulation. The project does not require a ROS 1 installation or bridge.
 
@@ -52,6 +62,18 @@ ros2 launch wonik_navigation navigation.launch.py
 # 3: U route (0,0) -> (12,0) -> (12,6) -> (0,6)
 ros2 launch wonik_navigation route.launch.py
 ```
+
+For SD, use these in the same three-terminal arrangement:
+
+```bash
+ros2 launch wonik_gazebo sd.launch.py world:=wonik_hall rviz:=false
+ros2 launch wonik_navigation navigation.launch.py robot:=sd
+ros2 launch wonik_navigation route.launch.py
+```
+
+Pass robot:=sd to mapping.launch.py or localization.launch.py as well. The shared
+sim.launch.py and bringup base.launch.py also accept robot:=cobot_v2|sd.
+SD has no sideways motion; its StopGo goal adjustment follows the current heading.
 
 For a headless display use gui:=false rviz:=false on the simulator and rviz:=false on navigation.
 A depth camera still requires rendering; the Docker helpers start Xvfb automatically.
@@ -86,7 +108,7 @@ Missions are started by route.launch.py; a free-space RViz goal is not a route c
 
 ## Fault injection
 
-Stop the mission and simulator first, then run the dedicated empty-world bench in two terminals:
+Stop the mission and simulator first, then run the dedicated cobot_v2 empty-world bench in two terminals:
 
 ~~~bash
 ros2 launch wonik_gazebo fault_injection.launch.py
@@ -104,6 +126,9 @@ The detector publishes /obstacle_distances (Float32MultiArray): front, front-lef
 rear, rear-right, right, front-right. The gate selects the directions of translation and computes
 a protective distance using the faster of the current and last output command speeds, with
 dec=0.5 m/s^2, latency=0.3 s and margin=0.3 m. These are cmd_vel_gate ROS parameters.
+The detector also publishes /obstacle_turn_clearance: [counterclockwise, clockwise] clearance in radians,
+computed from the same footprint polygon as Nav2. The gate compares this with a stopping angle
+using dec_theta=0.5 rad/s^2 and margin_theta=0.15 rad. Infinity means clear within the checked sweep.
 The legacy /obstacle_detected Boolean remains available for display.
 
 See [safety behaviour](docs/safety.md) for timeout, collision-check and fault-reset details.
@@ -118,7 +143,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ros2 run nav2_map_server map_saver_cli -f /absolute/output/map
 ```
 
-The mapping launch supplies the cloud-to-scan conversion and slam_toolbox.
+The mapping launch supplies the body-point filter, cloud-to-scan conversion and slam_toolbox.
 The teleop command above addresses the base directly; the navigation command gate is not launched
 during this mapping-only session. Localization alone is available through localization.launch.py.
 
@@ -155,15 +180,18 @@ Use docker stop rci_wonik_humble to stop the session; the build volume remains.
 
 | File | Purpose |
 | --- | --- |
-| wonik_cobot_v2_description/config/geometry.yaml | Module locations, wheel size, joints and body geometry |
-| wonik_cobot_v2_bringup/config/kinematics.yaml | Limits, alignment, timeouts and fault handling |
-| wonik_cobot_v2_bringup/config/controllers.yaml | ros2_control joints and controller types |
-| wonik_cobot_v2_bringup/config/ekf.yaml | Wheel/IMU fusion |
-| wonik_navigation/config/navigation.yaml | Nav2 costmaps, all controller variants, goal/progress checks |
-| wonik_navigation/config/cobot_v2/obstacle_detector.yaml | Required sensors, freshness and detection regions |
-| wonik_navigation/config/routes and config/zones | Route vertices and zone polygons |
+| `wonik_cobot_description/config/<robot>/geometry.yaml` | Module locations, wheel size, joints and body geometry |
+| `wonik_cobot_bringup/config/<robot>/kinematics.yaml` | Limits, alignment, timeouts and fault handling |
+| `wonik_cobot_bringup/config/<robot>/controllers.yaml` | ros2_control joints and controller types |
+| `wonik_cobot_bringup/config/<robot>/ekf.yaml` | Wheel/IMU fusion |
+| `wonik_navigation/config/navigation.yaml` | Common Nav2 costmaps, plugin IDs and goal/progress checks |
+| `wonik_navigation/config/<robot>/stop_go.yaml and avoid.yaml` | Robot-specific planner tuning, including holonomic adjustment |
+| `wonik_navigation/config/<robot>/footprint.yaml` | Shared polygon for Nav2 and turn-clearance checks |
+| `wonik_navigation/config/<robot>/self_filter.yaml` | LiDAR body-point removal bounds |
+| `wonik_navigation/config/<robot>/obstacle_detector.yaml` | Required sensors, freshness and detection regions |
+| `wonik_navigation/config/routes and config/zones` | Route vertices and zone polygons |
 
-The retired MBF and split ROS 1 planner/costmap files have been consolidated into navigation.yaml.
+MBF is replaced by Nav2; launch merges common navigation.yaml with the selected robot configuration.
 StopGo may wait behind an obstacle indefinitely; RouteProgressChecker intentionally preserves this
 behavior. SettledGoalChecker enforces the configured pose tolerance and stopped hold time.
 
@@ -179,7 +207,8 @@ AMCL or SLAM -> map -> odom TF
 
 The two command arrays follow geometry.yaml joint order. Both feedback position and velocity
 must be supplied with measurement timestamps. Joint controller command topics have the ROS 2
-plural suffix /commands. LiDAR is /points and depth is /camera/depth/points.
+plural suffix /commands. Raw LiDAR is /points, body-filtered LiDAR is /points_self_filtered,
+and depth is /camera/depth/points. Scan projection and the detector consume the filtered LiDAR.
 
 For hardware, provide the ros2_control SystemInterface (or a driver exposing the same commands
 and joint_states), actual sensor drivers, and controller-manager startup. base.launch.py accepts
@@ -199,8 +228,8 @@ Fault reset requires fresh feedback and returns through the stop/align sequence.
 
 ## Validation
 
-See [Humble validation](docs/humble-validation.md) for builds, tests, mission and fault-injection results.
-The later ROS 1 directional safety, controller and fault-injection changes are included.
+See [Humble QD/SD validation](docs/humble-sd-validation.md) for builds, tests, mission and fault-injection results.
+The latest ROS 1 package reorganization, SD model, turn-clearance checks and conditional detours are included.
 The existing GIFs under docs/gifs are inherited ROS 1 demonstrations.
 
 ## Contact

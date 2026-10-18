@@ -1,0 +1,6 @@
+# SD (virtual model, wonik_cobot_description/config/sd/geometry.yaml) outline plus 2 cm, in
+# base_footprint, the turning centre in the middle of the fork roller axle: the body ahead of it and the
+# single fork (0.30 m wide, its tip 0.11 m behind the rollers) around it. Not convex. navigation.launch.py
+# loads it into both costmaps (the controllers' collision checks) and the obstacle detector.
+footprint: [[1.068, 0.403], [0.612, 0.403], [0.612, 0.172], [-0.132, 0.172],
+            [-0.132, -0.172], [0.612, -0.172], [0.612, -0.403], [1.068, -0.403]]

@@ -1,5 +1,5 @@
 # qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, joint names)
-# is loaded separately from wonik_cobot_v2_description/config/geometry.yaml.
+# is loaded separately from wonik_cobot_description/config/cobot_v2/geometry.yaml.
 # PLACEHOLDER marks values that wait for the drive unit spec from Wonik; nothing here is a confirmed
 # hardware limit.
 control_rate_hz: 100.0
@@ -8,7 +8,7 @@ base_frame: base_footprint
 publish_tf: true
 
 # Input timeouts (see docs/safety.md). Without a cmd_vel for cmd_timeout_sec the base decelerates to a
-# stop; teleop must therefore repeat its command (teleop_twist_keyboard _repeat_rate:=10).
+# stop; teleop must therefore repeat its command (teleop_twist_keyboard --ros-args -p repeat_rate:=10.0).
 cmd_timeout_sec: 0.5
 # Without an accepted, recent joint_states sample for this long: zero wheel speed, steering held.
 joint_state_timeout_sec: 0.2
@@ -39,7 +39,7 @@ max_start_attempts: 2
 drive_track_abs_tol: 0.15
 drive_track_rel_tol: 0.5
 drive_fault_time: 1.0
-# FAULT is latched (new cmd_vel does not clear it): rosservice call /kinematics_node/clear_fault
+# FAULT is latched (new cmd_vel does not clear it): ros2 service call /kinematics_node/clear_fault std_srvs/srv/Trigger "{}"
 
 odom_max_dt: 0.1
 # [x, y, z, roll, pitch, yaw]

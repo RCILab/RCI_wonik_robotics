@@ -3,14 +3,14 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from wonik_navigation.launch_support import share, config, localization_nodes, navigation_params, rviz_node
+from wonik_navigation.launch_support import share, config, localization_nodes, navigation_params, rviz_node, obstacle_params
 
 def setup(context):
     val = lambda key: LaunchConfiguration(key).perform(context)
     sim, depth = val("use_sim_time").lower() == "true", val("depth_camera").lower() == "true"
     map_file = val("map_file") or os.path.join(share(), "maps", val("map") + ".yaml")
     actions = localization_nodes(val("robot"), map_file, sim, float(val("x")), float(val("y")), float(val("yaw")))
-    params = navigation_params(sim, depth)
+    params = navigation_params(val("robot"), sim, depth)
     actions += [
         Node(package="nav2_controller", executable="controller_server", name="controller_server",
              parameters=[params], remappings=[("cmd_vel", "cmd_vel_raw")], output="screen"),
@@ -18,11 +18,7 @@ def setup(context):
              parameters=[params], output="screen"),
         Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="lifecycle_manager_navigation",
              parameters=[{"use_sim_time": sim, "autostart": True, "node_names": ["controller_server", "planner_server"]}])]
-    obstacle = config("config/" + val("robot") + "/obstacle_detector.yaml")
-    # launch_ros cannot infer the type of empty arrays; the node defaults to [].
-    obstacle = {key: value for key, value in obstacle.items() if value != []}
-    if not depth:
-        obstacle["required_topics"] = ["/points"]
+    obstacle = obstacle_params(val("robot"), sim, depth)
     actions += [
         Node(package="wonik_navigation", executable="obstacle_detector.py", name="obstacle_detector",
              parameters=[obstacle, {"use_sim_time": sim}], output="screen"),

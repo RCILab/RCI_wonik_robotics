@@ -25,11 +25,13 @@ class MockNav2(Node):
     def __init__(self, mode):
         super().__init__("mock_nav2")
         self.mode, self.stopping = mode, False
+        self.zone_type = 'avoid'
         self.current = None
+        self.plan_requests = []
         self.controllers, self.states, self.output = [], [], []
         self.raw = self.create_publisher(Twist, "cmd_vel_raw", 1)
         self.dist = self.create_publisher(Float32MultiArray, "obstacle_distances", 1)
-        self.near = self.create_publisher(Bool, "obstacle_near", 1)
+        self.turn = self.create_publisher(Float32MultiArray, "obstacle_turn_clearance", 1)
         self.ok = self.create_publisher(Bool, "obstacle_detector/sensors_ok", 1)
         self.zone = self.create_publisher(String, "current_zone", 1)
         self.create_subscription(String, "route_supervisor/state", lambda m: self.states.append(m.data), 10)
@@ -49,9 +51,9 @@ class MockNav2(Node):
 
     def sensors(self):
         self.dist.publish(Float32MultiArray(data=[0.1] + [float("inf")] * 7))
-        self.near.publish(Bool(data=False))
+        self.turn.publish(Float32MultiArray(data=[float("inf")]*2))
         self.ok.publish(Bool(data=True))
-        self.zone.publish(String(data="avoid"))
+        self.zone.publish(String(data=self.zone_type))
 
     def accept(self, request):
         self.controllers.append(request.controller_id)
@@ -73,6 +75,7 @@ class MockNav2(Node):
         return FollowPath.Result()
 
     def compute(self, goal):
+        self.plan_requests.append(goal.request.goal.pose.position.x)
         if self.mode == "timeout":
             while not self.stopping and not goal.is_cancel_requested and rclpy.ok():
                 time.sleep(0.05)
@@ -137,5 +140,89 @@ def test_supervisor_gate(mode):
         thread.join(timeout=2)
         supervisor.destroy_node()
         gate.destroy_node()
+        mock.destroy_node()
+        rclpy.shutdown()
+
+def test_costmap_trigger_blocked_replan_and_heading_handover():
+    """Exercise DDS grid updates, asynchronous plans and the controller blocked topic."""
+    import math
+    from nav_msgs.msg import OccupancyGrid
+    from map_msgs.msg import OccupancyGridUpdate
+    from wonik_navigation.ros_node import latched_qos
+
+    rclpy.init(args=["--ros-args", "-p", "route:=" + str(ROOT / "test/route_test.yaml"),
+                    "-p", "zones:=" + str(ROOT / "test/zones_test.yaml"),
+                    "-p", "replan_period:=0.4"])
+    mock = MockNav2("ok")
+    mock.zone_type = "none"
+    supervisor = script("route_supervisor").RouteSupervisor()
+    executor = MultiThreadedExecutor(num_threads=8)
+    for node in (mock, supervisor):
+        executor.add_node(node)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    grid_pub = mock.create_publisher(OccupancyGrid, "/global_costmap/costmap", latched_qos())
+    update_pub = mock.create_publisher(OccupancyGridUpdate, "/global_costmap/costmap_updates", 10)
+    blocked_pub = mock.create_publisher(Bool, "/controller_server/avoid/blocked", latched_qos())
+    thread.start()
+
+    def wait_for(condition, seconds=4):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not condition():
+            time.sleep(0.02)
+        assert condition()
+
+    def pose(yaw):
+        tf = TransformStamped()
+        tf.header.frame_id, tf.child_frame_id = "map", "base_footprint"
+        tf.header.stamp = mock.get_clock().now().to_msg()
+        tf.transform.translation.x = 4.4
+        tf.transform.rotation.z, tf.transform.rotation.w = math.sin(yaw/2), math.cos(yaw/2)
+        mock.tf.sendTransform(tf)
+
+    try:
+        grid = OccupancyGrid()
+        grid.header.frame_id = "map"
+        grid.info.resolution, grid.info.width, grid.info.height = 0.1, 60, 20
+        grid.info.origin.position.y = -1.
+        grid.info.origin.orientation.w = 1.
+        grid.data = [0] * 1200
+        grid_pub.publish(grid)
+        wait_for(lambda: supervisor.grid is not None and supervisor.started)
+        mock.zone_type = "avoid"
+        time.sleep(0.8)
+        assert supervisor.state == "FOLLOW" and not mock.plan_requests
+
+        # A lethal cell on the route changes only part of the grid.
+        update = OccupancyGridUpdate()
+        update.header.frame_id = "map"
+        update.x, update.y, update.width, update.height = 10, 10, 1, 1
+        update.data = [100]
+        update_pub.publish(update)
+        wait_for(lambda: supervisor.state == "AVOID")
+        assert len(mock.plan_requests) == 1
+        assert 2.0 < mock.plan_requests[0] < 3.0, "rejoin just after obstacle, before zone exit"
+        time.sleep(0.9)
+        assert len(mock.plan_requests) == 1, "an unblocked detour must retain its path"
+
+        blocked_pub.publish(Bool(data=True))
+        wait_for(lambda: len(mock.plan_requests) >= 2)
+        blocked_pub.publish(Bool(data=False))
+        wait_for(lambda: not supervisor.avoid_blocked[0])
+        assert supervisor.state == "AVOID"
+        pose(1.0)
+        time.sleep(0.3)
+        assert supervisor.state == "AVOID", "proximity alone cannot hand over while heading away"
+        pose(0.0)
+        wait_for(lambda: supervisor.state == "FOLLOW")
+        assert mock.controllers[-1] == "stop_go"
+    finally:
+        supervisor.done = True
+        supervisor.goal_seq += 1
+        supervisor.cancel_plan()
+        mock.stopping = True
+        time.sleep(0.3)
+        executor.shutdown(timeout_sec=5)
+        thread.join(timeout=2)
+        supervisor.destroy_node()
         mock.destroy_node()
         rclpy.shutdown()

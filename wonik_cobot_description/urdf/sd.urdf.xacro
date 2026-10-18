@@ -1,0 +1,300 @@
+<?xml version="1.0"?>
+<!-- Wonik SD (Single Drive), virtual model: geometry comes from config/sd/geometry.yaml (read off the
+     drawing, no CAD yet). Visuals and collisions are primitives. Everything Gazebo-specific is in
+     sd.gazebo.xacro (ignored outside Gazebo).
+       xacro sd.urdf.xacro [sim_drive:=kinematic|physics] [lidar_gpu:=true] [depth_camera:=false] -->
+<robot name="wonik_sd" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="geometry" default="$(find wonik_cobot_description)/config/sd/geometry.yaml"/>
+  <xacro:arg name="sim_drive" default="kinematic"/>
+  <xacro:arg name="lidar_gpu" default="false"/>
+  <!-- Gazebo depth camera sensor; it needs an X display (rendering) to produce images -->
+  <xacro:arg name="depth_camera" default="true"/>
+  <xacro:include filename="$(find wonik_cobot_description)/urdf/sd.gazebo.xacro"/>
+
+  <xacro:property name="g" value="${xacro.load_yaml('$(arg geometry)')}"/>
+  <xacro:property name="wheel_r" value="${g['wheel_diameter'] / 2.0}"/>
+  <xacro:property name="roller_r" value="${g['roller_diameter'] / 2.0}"/>
+  <xacro:property name="caster_r" value="${g['caster_diameter'] / 2.0}"/>
+
+  <material name="body_white"><color rgba="0.93 0.92 0.88 1.0"/></material>
+  <material name="base_blue"><color rgba="0.15 0.40 0.85 1.0"/></material>
+  <material name="fork_grey"><color rgba="0.62 0.64 0.68 1.0"/></material>
+  <material name="unit_yellow"><color rgba="0.90 0.70 0.15 1.0"/></material>
+  <material name="roller_green"><color rgba="0.25 0.85 0.30 1.0"/></material>
+
+  <!-- A box [x_min, x_max, y_min, y_max, z_min, z_max] as origin + size -->
+  <xacro:macro name="box_geometry" params="b">
+    <origin xyz="${(b[0] + b[1]) / 2} ${(b[2] + b[3]) / 2} ${(b[4] + b[5]) / 2}"/>
+    <geometry><box size="${b[1] - b[0]} ${b[3] - b[2]} ${b[5] - b[4]}"/></geometry>
+  </xacro:macro>
+
+  <!-- base: base_link coincides with base_footprint (floor, middle of the roller axle) -->
+  <link name="base_footprint"/>
+  <joint name="base_link_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <xacro:property name="b" value="${g['body_box']}"/>
+  <xacro:property name="m" value="${g['body_mass']}"/>
+  <link name="base_link">
+    <!-- the mass sits in the body (inertia of the body box) -->
+    <inertial>
+      <mass value="${m}"/>
+      <origin xyz="${(b[0] + b[1]) / 2} 0 ${(b[4] + b[5]) / 2}"/>
+      <inertia ixx="${m * ((b[3] - b[2]) ** 2 + (b[5] - b[4]) ** 2) / 12}" ixy="0" ixz="0"
+               iyy="${m * ((b[1] - b[0]) ** 2 + (b[5] - b[4]) ** 2) / 12}" iyz="0"
+               izz="${m * ((b[1] - b[0]) ** 2 + (b[3] - b[2]) ** 2) / 12}"/>
+    </inertial>
+    <!-- white body above the blue chassis band (chassis_link), the column; the fork is fork_link -->
+    <visual>
+      <xacro:box_geometry b="${[b[0], b[1], b[2], b[3], 0.17, b[5]]}"/>
+      <material name="body_white"/>
+    </visual>
+    <visual>
+      <xacro:box_geometry b="${g['column_box']}"/>
+      <material name="body_white"/>
+    </visual>
+    <collision>
+      <xacro:box_geometry b="${b}"/>
+    </collision>
+    <collision>
+      <xacro:box_geometry b="${g['column_box']}"/>
+    </collision>
+    <collision>
+      <xacro:box_geometry b="${g['fork_box']}"/>
+    </collision>
+  </link>
+
+  <!-- Visual-only parts with their own colour (Gazebo colours per link): chassis band and fork -->
+  <xacro:macro name="visual_part" params="name box material">
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+    </joint>
+    <link name="${name}_link">
+      <inertial>
+        <mass value="0.01"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+      <visual>
+        <xacro:box_geometry b="${box}"/>
+        <material name="${material}"/>
+      </visual>
+    </link>
+  </xacro:macro>
+  <xacro:visual_part name="chassis" box="${[b[0], b[1], b[2], b[3], b[4], 0.17]}" material="base_blue"/>
+  <xacro:visual_part name="fork" box="${g['fork_box']}" material="fork_grey"/>
+
+  <!-- Drive unit: steer (continuous, position interface) + drive (continuous, velocity interface).
+       Steer frame sits on the steer axis at wheel-centre height; x = rolling direction at angle 0. -->
+  <xacro:macro name="drive_unit" params="name x y">
+    <joint name="${name}_steer_joint" type="continuous">
+      <origin xyz="${x} ${y} ${wheel_r}" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="1.0"/>
+      <parent link="base_link"/>
+      <child link="${name}_steer_link"/>
+    </joint>
+    <link name="${name}_steer_link">
+      <inertial>
+        <mass value="2.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+      </inertial>
+      <!-- steer housing above the wheel -->
+      <visual>
+        <origin xyz="0 0 ${wheel_r + 0.04}"/>
+        <geometry><cylinder radius="${wheel_r}" length="0.08"/></geometry>
+        <material name="fork_grey"/>
+      </visual>
+    </link>
+
+    <joint name="${name}_drive_joint" type="continuous">
+      <origin xyz="0 0 0" rpy="${-pi / 2} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="0.015"/>
+      <limit effort="1000.0" velocity="30.0"/>
+      <parent link="${name}_steer_link"/>
+      <child link="${name}_drive_link"/>
+    </joint>
+    <xacro:property name="w" value="${g['wheel_width']}"/>
+    <link name="${name}_drive_link">
+      <inertial>
+        <mass value="5.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="${5.0 * (3 * wheel_r ** 2 + w ** 2) / 12}" ixy="0" ixz="0"
+                 iyy="${5.0 * (3 * wheel_r ** 2 + w ** 2) / 12}" iyz="0" izz="${5.0 * wheel_r ** 2 / 2}"/>
+      </inertial>
+      <visual>
+        <geometry><cylinder radius="${wheel_r}" length="${w}"/></geometry>
+        <material name="unit_yellow"/>
+      </visual>
+      <!-- Sphere, not a cylinder: ODE puts a rigid cylinder's contact on its rim edge (see cobot_v2). -->
+      <collision>
+        <geometry><sphere radius="${wheel_r}"/></geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+  <xacro:drive_unit name="${g['module_names'][0]}" x="${g['module_x'][0]}" y="${g['module_y'][0]}"/>
+
+  <!-- Fixed fork roller: rolls about the base y axis (continuous joint, no actuator), sphere contact. -->
+  <xacro:macro name="roller" params="name x y">
+    <joint name="${name}_joint" type="continuous">
+      <origin xyz="${x} ${y} ${roller_r}" rpy="${-pi / 2} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="0.001"/>
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+    </joint>
+    <link name="${name}_link">
+      <inertial>
+        <mass value="0.5"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="0.0005" ixy="0" ixz="0" iyy="0.0005" iyz="0" izz="0.0005"/>
+      </inertial>
+      <visual>
+        <geometry><cylinder radius="${roller_r}" length="0.05"/></geometry>
+        <material name="roller_green"/>
+      </visual>
+      <collision>
+        <geometry><sphere radius="${roller_r}"/></geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- Passive caster: sphere contact (low friction in Gazebo). -->
+  <xacro:macro name="caster" params="name x y">
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="${x} ${y} ${caster_r}" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+    </joint>
+    <link name="${name}_link">
+      <inertial>
+        <mass value="1.0"/>
+        <origin xyz="0 0 0"/>
+        <inertia ixx="0.002" ixy="0" ixz="0" iyy="0.002" iyz="0" izz="0.002"/>
+      </inertial>
+      <visual>
+        <geometry><sphere radius="${caster_r}"/></geometry>
+        <material name="fork_grey"/>
+      </visual>
+      <collision>
+        <geometry><sphere radius="${caster_r}"/></geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- xacro has no loops -->
+  <xacro:macro name="rollers" params="i:=0">
+    <xacro:if value="${i &lt; len(g['roller_names'])}">
+      <xacro:roller name="${g['roller_names'][i]}" x="${g['roller_x'][i]}" y="${g['roller_y'][i]}"/>
+      <xacro:rollers i="${i + 1}"/>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:macro name="casters" params="i:=0">
+    <xacro:if value="${i &lt; len(g['caster_names'])}">
+      <xacro:caster name="${g['caster_names'][i]}" x="${g['caster_x'][i]}" y="${g['caster_y'][i]}"/>
+      <xacro:casters i="${i + 1}"/>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:rollers/>
+  <xacro:casters/>
+
+  <!-- 3D LiDAR (velodyne_simulator), stand-in. Topic /points, frame velodyne. min_range 0.3 m as on
+       cobot_v2. -->
+  <xacro:property name="l" value="${g['lidar_xyz']}"/>
+  <link name="velodyne">
+    <inertial><mass value="0.8"/><inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/></inertial>
+    <visual><geometry><cylinder radius="0.04" length="0.07"/></geometry></visual>
+  </link>
+  <joint name="velodyne_joint" type="fixed">
+    <parent link="base_link"/><child link="velodyne"/><origin xyz="${l[0]} ${l[1]} ${l[2]}" rpy="0 0 0"/>
+  </joint>
+  <gazebo reference="velodyne">
+    <sensor name="lidar" type="${'gpu_ray' if '$(arg lidar_gpu)' == 'true' else 'ray'}">
+      <always_on>true</always_on><update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal><samples>625</samples><resolution>1</resolution><min_angle>-3.14159265</min_angle><max_angle>3.14159265</max_angle></horizontal>
+          <vertical><samples>32</samples><resolution>1</resolution><min_angle>-0.5353</min_angle><max_angle>0.1862</max_angle></vertical>
+        </scan>
+        <range><min>0.3</min><max>30.0</max><resolution>0.01</resolution></range>
+      </ray>
+      <plugin name="lidar_ros" filename="libgazebo_ros_ray_sensor.so">
+        <ros><remapping>~/out:=/points</remapping></ros>
+        <output_type>sensor_msgs/PointCloud2</output_type><frame_name>velodyne</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- Front depth camera (RealSense D435). camera_depth_optical_frame: z forward, x right, y down. -->
+  <xacro:property name="c" value="${g['depth_camera_xyz']}"/>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="${c[0]} ${c[1]} ${c[2]}" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+  </joint>
+  <link name="camera_link">
+    <inertial>
+      <mass value="0.07"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+    <visual>
+      <origin xyz="-0.0125 0 0"/>
+      <geometry><box size="0.025 0.09 0.025"/></geometry>
+      <material name="fork_grey"/>
+    </visual>
+  </link>
+  <joint name="camera_depth_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-pi / 2} 0 ${-pi / 2}"/>
+    <parent link="camera_link"/>
+    <child link="camera_depth_optical_frame"/>
+  </joint>
+  <link name="camera_depth_optical_frame"/>
+
+  <!-- IMU: /imu/data in frame imu_link -->
+  <xacro:property name="i" value="${g['imu_xyz']}"/>
+  <xacro:property name="ir" value="${g['imu_rpy']}"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="${i[0]} ${i[1]} ${i[2]}" rpy="${ir[0]} ${ir[1]} ${ir[2]}"/>
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+
+  <xacro:sd_gazebo sim_drive="$(arg sim_drive)" depth_camera="$(arg depth_camera)"/>
+
+  <xacro:arg name="hardware_plugin" default="gazebo_ros2_control/GazeboSystem"/>
+  <ros2_control name="WonikSystem" type="system">
+    <hardware><plugin>$(arg hardware_plugin)</plugin></hardware>
+    <xacro:macro name="control_modules" params="i:=0">
+      <xacro:if value="${i &lt; len(g['module_names'])}">
+        <joint name="${g['steer_joints'][i]}">
+          <command_interface name="position"/>
+          <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+          <state_interface name="velocity"/>
+        </joint>
+        <joint name="${g['drive_joints'][i]}">
+          <command_interface name="velocity"/>
+          <state_interface name="position"/><state_interface name="velocity"/>
+        </joint>
+        <xacro:control_modules i="${i+1}"/>
+      </xacro:if>
+    </xacro:macro>
+    <xacro:control_modules/>
+  </ros2_control>
+
+</robot>

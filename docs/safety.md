@@ -13,7 +13,7 @@ sensor specifications; nothing here is a confirmed hardware limit.
 | `robot_localization` `ekf_odom` | wheel odometry + IMU yaw rate | (see [Odometry](#odometry)) |
 | `stop_go_local_planner`, `pure_pursuit_local_planner` | odometry age; swept footprint of the commanded motion on the local costmap | controller fails / stop and wait |
 | Nav2 local costmap | every observation source within its expected update interval | controller waits for a current costmap; the independent gate stops stale raw commands |
-| `obstacle_detector` + `cmd_vel_gate` | sensor validity; protective field in the direction of travel; turn radius | zero command |
+| `obstacle_detector` + `cmd_vel_gate` | sensor validity; protective field in the direction of travel and of a turn in place | zero command |
 | `route_supervisor` | detour planning and execution | holds the robot or keeps it on the route behind the gate |
 
 The higher layers only stop what they command. None of them can stop the wheels if the drive unit driver
@@ -26,7 +26,7 @@ and it independently stops for stale required sensor data. See the
 
 ## qd_kinematics
 
-Parameters in `wonik_cobot_v2_bringup/config/kinematics.yaml`.
+Parameters in `wonik_cobot_bringup/config/<robot>/kinematics.yaml`.
 
 - `cmd_vel` older than `cmd_timeout_sec` (0.5 s): zero command, the base brakes at `linear_dec`. A
   non-finite `cmd_vel` is taken as a zero command. Teleop must repeat its command
@@ -60,7 +60,7 @@ Parameters in `wonik_cobot_v2_bringup/config/kinematics.yaml`.
 
 ## Odometry
 
-`ekf_odom` (robot_localization EKF, `config/ekf.yaml`) fuses the wheel body velocities with the IMU yaw
+`ekf_odom` (robot_localization EKF, `config/<robot>/ekf.yaml`) fuses the wheel body velocities with the IMU yaw
 rate and is the only publisher of `/odom` and TF `odom → base_footprint`. If `/wheel/odom` stops, the
 EKF keeps predicting with its last velocity; the kinematics node has stopped the base by then
 (feedback timeout), but `/odom` drifts until the wheel odometry is back. robot_localization does not
@@ -70,7 +70,8 @@ estimate a gyro bias: the IMU driver has to remove it (e.g. calibrated at stands
 
 Shared code in `local_planner_checks` (the same functions in both planners and in the tests):
 
-- Every command is checked on the local costmap with the full footprint polygon at the start pose, at
+- Every command is checked on the local costmap with the full footprint polygon (convex or nonconvex,
+  turning about base_footprint, including the offset SD body) at the start pose, at
   the end pose and in between, spaced so no footprint point moves more than half a cell between two
   checked poses (the corners of a turning rectangle included). A lethal cell, an unobserved cell
   (`NO_INFORMATION`, kept because the local costmap has `track_unknown_space: true`) or a pose outside
@@ -87,7 +88,8 @@ Shared code in `local_planner_checks` (the same functions in both planners and i
 - A segment end or the goal counts only by the actual distance to it (`xy_goal_tolerance`), with the
   heading (`yaw_goal_tolerance`) and the robot stopped; along-track distance is not enough. A small miss
   (sideways, overshoot, a localization correction after reaching it) is driven out sideways
-  (`adjust_max_dist`, holonomic base), a larger one is approached again as a new segment.
+  (`adjust_max_dist`, holonomic QD), or along the heading for SD (`holonomic: false`); a larger
+  or unreachable sideways miss is approached again as a new segment.
 
 ## Obstacle detector and cmd_vel gate
 
@@ -101,27 +103,36 @@ Shared code in `local_planner_checks` (the same functions in both planners and i
   make up for another failing. A sensor in `optional_topics` keeps its last obstacles while stale.
 - Switched off on purpose: `navigation.launch.py depth_camera:=false` removes the depth camera from the
   required sensors and the costmaps. With `depth_camera:=true` a silent camera stops the robot.
-- Protective field: the detector reports how far the body (grown by `side_margin`) can move in 8
-  directions before touching an obstacle. The gate stops a translation when the distance in the
-  direction(s) it moves is below the stopping distance using the faster of the current and last output commands (gate `dec`, `latency`,
-  `margin`). Turning in place stops for obstacle points within `turn_radius` of the centre.
+- Protective field: the detector reports how far the body's bounding box (grown by `side_margin`)
+  can move in 8 directions before touching an obstacle, and how far the footprint polygon
+  (`config/<robot>/footprint.yaml`, shared with Nav2) can turn in place each way before touching one.
+  Rotation is about `base_footprint`, the SD fork roller axle with the body ahead of it.
+  The gate compares translational clearance with the stopping distance (`dec`, `latency`, `margin`),
+  and turn clearance with the stopping angle (`dec_theta`, `latency`, `margin_theta`). Both use the
+  faster of the current and last output commands, not measured body velocity.
 - The supervisor state counts only while current (published at 10 Hz, `state_timeout` 0.5 s). Only a
   confirmed detour (AVOID) delegates the obstacle stops to the avoid controller; sensor validity is
   always checked.
 - Every 50 ms the gate judges the command in force again (the last `cmd_vel_raw`, none once it is older
   than `raw_timeout`) and sends a stop at once when the result is more restrictive than what it sent last.
 - Sensor coverage: the LiDAR sees 360° but not low objects close to the robot; the depth camera only
-  looks forward. Turning-radius and side checks depend on the LiDAR (the simulated HDL-32E has a 0.3 m
-  minimum range, the Mid-360 0.1 m).
+  looks forward. Turn and side checks depend on the LiDAR (the simulated HDL-32E has a 0.3 m
+  minimum range, the Mid-360 0.1 m). On SD the LiDAR is on the 1.7 m column; low obstacles
+  close beside the robot can lie below its scan coverage.
 
 The detector publishes /obstacle_distances as eight Float32MultiArray entries, in metres from the
 expanded body: front, front-left, left, rear-left, rear, rear-right, right, front-right. Adjacent
 directions bracket a command between bins. Infinity means no qualifying obstacle within max_range;
 a failed required sensor yields zeros and sensors_ok=false. /obstacle_detected is retained as a
-front-field display indicator; the gate uses the distance array.
+front-field display indicator. /obstacle_turn_clearance contains [counterclockwise, clockwise]
+clearance in radians; a failed required sensor yields [0, 0]. The gate uses both arrays.
+Raw LiDAR passes through self_filter.py before projection and detection. The filter removes body
+points using the robot-specific CropBox bounds and preserves measurement stamps and other fields.
+If its measurement-time TF is unavailable, the cloud is dropped; a silent filter fails the sensor check.
 
 The gate defaults are dec=0.5 m/s^2, latency=0.3 s and margin=0.3 m. Its speed input is derived from
 commands, not measured odometry; the controller collision checks separately include measured speed.
+Turn defaults are dec_theta=0.5 rad/s^2 and margin_theta=0.15 rad.
 The detector's side_margin defaults to 0.1 m and max_range to 3.0 m.
 
 ## Route supervisor
@@ -129,13 +140,18 @@ The detector's side_margin defaults to 0.1 m and max_range to 3.0 m.
 States on `/route_supervisor/state`: FOLLOW, AVOID_PREP, AVOID, AVOID_HOLD, DONE (see
 `scripts/route_supervisor.py`).
 
-- Entering avoidance (zone or mode): AVOID_PREP while the detour is planned. The route goal keeps
-  running behind the closed gate, so the robot stops in front of an obstacle. Planning failures and
-  timeouts (`plan_timeout`) are retried every `replan_period`; a detour goal that Nav2 rejects
-  or aborts before it runs restarts the route goal.
-- AVOID only once Nav2 reports feedback from the detour goal. A failed replan keeps the
-  current detour. A detour that ends without success → AVOID_HOLD: the robot stands, the gate is closed,
-  the detour is replanned until one runs.
+- Entering avoidance: explicit mode avoid, or an avoid zone whose route ahead is blocked on the global
+  costmap. A clear avoid zone stays in FOLLOW. Without costmap data the whole zone is treated as a detour.
+  Full costmaps and incremental updates are consumed from `/global_costmap/costmap` and `_updates`.
+  The default global costmap publishes full grids at 1 Hz so late subscribers receive current obstacles.
+  AVOID_PREP holds the gate while planning; planning failures/timeouts (`plan_timeout`) are retried at
+  `replan_period`. A detour rejected or aborted before feedback restarts the route goal.
+- AVOID begins only after feedback from the current accepted Nav2 detour. While running, replanning
+  occurs only when `/controller_server/avoid/blocked` remains true for `replan_period`; a failed replan retains
+  the running detour. Rejoin is `rejoin_margin` past the last obstacle, followed by `rejoin_tail`
+  along the route. StopGo takes over only when near the route and aligned within
+  `handover_yaw_tolerance` (0.17 rad).
+- A detour that ends without success enters AVOID_HOLD; the gate closes and planning is retried.
 - Results and feedback of replaced goals are ignored. Zone data older than `zone_timeout` counts as no
   zone.
 
@@ -147,7 +163,7 @@ For the drive unit driver that replaces Gazebo (Wonik):
   100 Hz command rate of `kinematics_node`), independent of the ROS nodes above.
 - `joint_states` with the measurement time in `header.stamp` (same clock as the ROS nodes), every
   steer joint's position and every drive joint's velocity, at a steady rate (100 Hz in simulation).
-- Steer position and drive velocity interfaces as in `config/controllers.yaml`.
+- Steer position and drive velocity interfaces as in `config/<robot>/controllers.yaml`.
 - IMU on `/imu/data` (frame `imu_link`, mount in `geometry.yaml`) with its gyro bias removed.
 
 ## Verification
@@ -157,8 +173,8 @@ Tests (`colcon test --executor sequential`):
 | Package | Covers |
 |---|---|
 | `qd_kinematics` (26) | kinematics and odometry (the 18 original tests); CREEP needs measured wheel speed, one module not driving, wheel stall in DRIVE, FAULT latched until cleared, restart after reset/clear checks measured speed, non-finite input, stamp classification |
-| `local_planner_checks` (8) | turning next to a wall, commanded arc vs. path, unobserved and off-map cells, start and end poses, inflation, stopping distance, goal by actual position (goal (5, 0), robot (5, 1): not reached) |
-| `wonik_navigation` (19 policy + 9 ROS 2 cases) | corridors and protective field, required/optional sensors, invalid frames, measurement time, gate policy; the real `route_supervisor` and `cmd_vel_gate` against mock Nav2 action servers (detour planning times out, fails, is rejected, works); gate with a dead supervisor or detector, a turn stopped without a new command, a silent Nav2 |
+| `local_planner_checks` (10) | turning next to a wall, commanded arc vs. path, unobserved and off-map cells, start and end poses, inflation, nonconvex polygons, offset rotation, stopping distance, goal by actual position (goal (5, 0), robot (5, 1): not reached) |
+| `wonik_navigation` (31 policy/route + 12 ROS 2 cases) | corridors and protective field, required/optional sensors, invalid frames, measurement time, gate policy; the real `route_supervisor` and `cmd_vel_gate` against mock Nav2 action servers (detour planning times out, fails, is rejected, works); gate with a dead supervisor or detector, a turn stopped without a new command, a silent Nav2; padded/big-endian clouds and field preservation; costmap-triggered avoidance, blocked-only replan and heading-aligned handover |
 
 Fault injection in Gazebo (`ros2 launch wonik_gazebo fault_injection.launch.py`, then
 `ros2 run wonik_gazebo fault_injection.py <case>`): b1 joint_states lost while driving, b2 cmd_vel lost,
@@ -174,4 +190,4 @@ The ROS 2 fault bench uses /camera_relay/enabled (std_srvs/SetBool) to simulate 
 The all argument runs all six cases, restores the relay/controllers and removes spawned obstacles.
 NaN injection invalidates all velocity entries so that the test includes a drive joint regardless
 of ros2_control JointState ordering. The acceptance thresholds are unchanged from the ROS 1 tool.
-See [Humble validation](humble-validation.md) for measured results.
+See [Humble QD/SD validation](humble-sd-validation.md) for measured results.

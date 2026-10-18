@@ -20,12 +20,12 @@ def test_gate_timeouts():
     executor = SingleThreadedExecutor()
     executor.add_node(gate)
     executor.add_node(mock)
-    inputs = dict(state="AVOID", detector=True, sensors_ok=True, near=False,
+    inputs = dict(state="AVOID", detector=True, sensors_ok=True, turn_blocked=False,
                   raw=(0.5, 0.0, 0.0))
     received = []
     state = mock.create_publisher(String, "/route_supervisor/state", 1)
     dist = mock.create_publisher(Float32MultiArray, "/obstacle_distances", 1)
-    near = mock.create_publisher(Bool, "/obstacle_near", 1)
+    turn = mock.create_publisher(Float32MultiArray, "/obstacle_turn_clearance", 1)
     ok = mock.create_publisher(Bool, "/obstacle_detector/sensors_ok", 1)
     raw = mock.create_publisher(Twist, "/cmd_vel_raw", 1)
     mock.create_subscription(Twist, "/cmd_vel",
@@ -37,7 +37,7 @@ def test_gate_timeouts():
         if inputs["detector"]:
             # Obstacle inside the protective field at 0.5 m/s.
             dist.publish(Float32MultiArray(data=[0.5] + [float("inf")] * 7))
-            near.publish(Bool(data=inputs["near"]))
+            turn.publish(Float32MultiArray(data=[0.0]*2 if inputs["turn_blocked"] else [float("inf")]*2))
             ok.publish(Bool(data=inputs["sensors_ok"]))
         if inputs["raw"] is not None:
             cmd = Twist()
@@ -70,16 +70,16 @@ def test_gate_timeouts():
 
         inputs["raw"] = (0.0, 0.0, 0.4)
         assert after(0.5) == (0.0, 0.4)
-        inputs.update(raw=None, near=True)
+        inputs.update(raw=None, turn_blocked=True)
         assert after(0.2) == (0.0, 0.0), "stop an active turn before raw timeout"
 
-        inputs.update(near=False, raw=(0.0, 0.0, 0.4))
+        inputs.update(turn_blocked=False, raw=(0.0, 0.0, 0.4))
         assert after(0.5) == (0.0, 0.4)
         inputs["raw"] = None
         assert after(0.3) == (0.0, 0.4), "command is still current"
         assert after(0.5) == (0.0, 0.0), "silent controller must time out"
 
-        inputs.update(raw=(0.0, 0.0, 0.4), near=True)
+        inputs.update(raw=(0.0, 0.0, 0.4), turn_blocked=True)
         assert after(0.3) == (0.0, 0.0)
         inputs["sensors_ok"] = False
         assert after(0.3) == (0.0, 0.0), "a second stop reason must remain stopped"

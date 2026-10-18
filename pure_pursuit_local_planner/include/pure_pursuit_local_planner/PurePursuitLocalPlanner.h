@@ -1,6 +1,7 @@
 #ifndef PURE_PURSUIT_LOCAL_PLANNER_PUREPURSUITLOCALPLANNER_H_
 #define PURE_PURSUIT_LOCAL_PLANNER_PUREPURSUITLOCALPLANNER_H_
 
+#include <std_msgs/msg/bool.hpp>
 #include <string>
 #include <vector>
 
@@ -49,8 +50,10 @@ class PurePursuitLocalPlanner : public nav2_core::Controller
   private:
     void odomCallback(const nav_msgs::msg::Odometry::ConstSharedPtr &msg);
     bool odometryFresh(const rclcpp::Time &now) const;
-    bool commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed, double target_yawrate, double rotation_left,
-                       const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot, double yaw);
+    void setBlocked(bool blocked); // publishes ~blocked when it changes
+    bool commandIsFree(const geometry_msgs::msg::Twist &cmd, double planned_speed, double target_yawrate,
+                       double rotation_left, const std::vector<tf2::Vector3> &local_plan, const tf2::Transform &robot,
+                       double yaw);
 
   private:
     rclcpp_lifecycle::LifecycleNode::SharedPtr m_node;
@@ -69,6 +72,7 @@ class PurePursuitLocalPlanner : public nav2_core::Controller
     nav_msgs::msg::Odometry::ConstSharedPtr m_odometry;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr m_odom_sub;
     rclcpp_lifecycle::LifecyclePublisher<nav_msgs::msg::Path>::SharedPtr m_local_plan_pub;
+    rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Bool>::SharedPtr m_blocked_pub;
 
     std::string m_global_frame = "map";
     std::string m_local_frame = "odom";
@@ -82,8 +86,10 @@ class PurePursuitLocalPlanner : public nav2_core::Controller
     double m_start_yaw_error = 0;     // [rad] rotate in place first when the path starts off this much
     double m_max_curve_vel = 0;       // [rad/s] yaw rate limit in curves, caps the speed
     double m_trans_acc_lim_theta = 0; // [rad/s^2] yaw-rate slew while translating
-    double m_low_pass_gain = 0;       // yaw-rate low pass while translating (1 = off)
+    double m_low_pass_gain = 0;       // curvature low pass while translating (1 = off)
+    double m_max_curvature_rate = 0;  // [1/(m s)] rate limit of the curvature (steering) while translating
     double m_min_stop_dist = 0;       // [m] footprint check reaches this far beyond the braking distance
+    double m_path_heading_dist = 0;   // [m] path-ahead check: heading toward the path point this far on
     double m_goal_tune_time = 0;      // [s]
     double m_odom_timeout = 0;        // [s] older odometry is not used (the controller fails)
     double m_collision_latency = 0;   // [s] reaction time in the stopping distance
@@ -104,7 +110,10 @@ class PurePursuitLocalPlanner : public nav2_core::Controller
     rclcpp::Time m_first_goal_reached_time{0, 0, RCL_ROS_TIME};
     bool m_is_goal_reached = false;
     bool m_blocked = false;
+    bool m_blocked_published = false;
     geometry_msgs::msg::Twist m_last_cmd_vel;
+    double m_curvature = 0;        // [1/m] filtered curvature of the last translating step
+    bool m_have_curvature = false; // m_curvature is the steering the base is driving with
 };
 
 } // namespace pure_pursuit_local_planner

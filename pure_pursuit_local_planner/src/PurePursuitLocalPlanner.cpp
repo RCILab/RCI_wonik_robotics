@@ -8,6 +8,7 @@
 #include <local_planner_checks/footprint_checker.h>
 #include <nav_msgs/msg/path.hpp>
 #include <pluginlib/class_list_macros.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <tf2/utils.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -50,7 +51,9 @@ std::size_t find_closest_point(const std::vector<tf2::Vector3> &path, std::size_
     return best;
 }
 
-// Point at arc length 'dist' along the path from index i (clamped to the path end).
+// Point at arc length 'dist' along the path from index i. Past the path end the path is extended
+// straight in the direction of its last step, so the target never closes in on the robot (that would
+// make the curvature, and the steering, swing near the end).
 tf2::Vector3 move_along_path(const std::vector<tf2::Vector3> &path, std::size_t i, double dist)
 {
     for (; i + 1 < path.size(); ++i)
@@ -61,6 +64,14 @@ tf2::Vector3 move_along_path(const std::vector<tf2::Vector3> &path, std::size_t 
             return path[i] + (path[i + 1] - path[i]) * (len > 1e-9 ? dist / len : 0.0);
         }
         dist -= len;
+    }
+    for (std::size_t k = path.size() - 1; k > 0; --k)
+    {
+        const tf2::Vector3 step = path[k] - path[k - 1];
+        if (step.length() > 1e-6)
+        {
+            return path.back() + step.normalized() * dist;
+        }
     }
     return path.back();
 }
@@ -202,23 +213,36 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
     else
     {
         const double dist_sq = local_target.x() * local_target.x() + local_target.y() * local_target.y();
-        const double curvature = dist_sq > 1e-6 ? 2 * local_target.y() / dist_sq : 0;
+        const double pursuit_curvature = dist_sq > 1e-6 ? 2 * local_target.y() / dist_sq : 0;
+
+        // The drive units' steering angles follow the curvature, not the yaw rate: low pass the curvature and
+        // limit its rate of change (max_curvature_rate), so the steering moves smoothly also while the speed
+        // changes and when a new path is handed over. A steering step makes the base stop, re-steer and
+        // start again.
+        double curvature = pursuit_curvature;
+        if (m_have_curvature)
+        {
+            curvature = curvature * m_low_pass_gain + m_curvature * (1 - m_low_pass_gain);
+            curvature = slew(m_curvature, curvature, m_max_curvature_rate * dt);
+        }
+        m_curvature = curvature;
+        m_have_curvature = true;
 
         // speed: braking profile toward the path end and the curvature limit (as max_curve_vel in neo)
         double vel_x = std::min(std::sqrt(2 * m_dec_lim_x * remaining), m_limits.max_vel_x);
-        if (std::fabs(curvature) > 1e-3)
+        const double sharpest = std::max(std::fabs(pursuit_curvature), std::fabs(curvature));
+        if (sharpest > 1e-3)
         {
-            vel_x = std::min(vel_x, m_max_curve_vel / std::fabs(curvature));
+            vel_x = std::min(vel_x, m_max_curve_vel / sharpest);
         }
         vel_x = std::max(vel_x, m_limits.min_vel_trans);
         planned_speed = vel_x;
 
         control_vel_x = std::min(vel_x, m_last_cmd_vel.linear.x + m_limits.acc_lim_x * dt);
 
-        // yaw rate = v * curvature, low passed and slew limited (smooth re-steering of the drive units)
+        // yaw rate = v * curvature, slew limited; the pursuit arc itself for the collision check
         control_yawrate = control_vel_x * curvature;
-        target_yawrate = control_yawrate;
-        control_yawrate = control_yawrate * m_low_pass_gain + m_last_cmd_vel.angular.z * (1 - m_low_pass_gain);
+        target_yawrate = control_vel_x * pursuit_curvature;
         control_yawrate = slew(m_last_cmd_vel.angular.z, control_yawrate, m_trans_acc_lim_theta * dt);
         m_state = STATE_TRANSLATING;
     }
@@ -236,6 +260,10 @@ bool PurePursuitLocalPlanner::computeVelocityCommands(geometry_msgs::msg::Twist 
     }
     cmd_vel = cmd;
     m_last_cmd_vel = cmd;
+    if (m_state != STATE_TRANSLATING || cmd.linear.x < 1e-3)
+    {
+        m_have_curvature = false; // stopping: the base re-aligns its steering before it drives again
+    }
 
     // publish the path ahead (local frame) for visualization
     nav_msgs::msg::Path local_path;
@@ -290,13 +318,23 @@ bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::msg::Twist &cmd
         result = checker.checkPath(motion, dist);
         what = "driving";
         // 2. the path ahead from its closest point
+        //    The heading at a path point is taken toward the point path_heading_dist further on, not toward
+        //    the next sample: the robot does not follow the planner's centimetre-scale wiggles, and on a body
+        //    reaching far from the turning centre (SD: 1.07 m) a few degrees of wiggle would swing the
+        //    checked footprint into obstacles the robot passes well clear of.
         if (result.free())
         {
             std::vector<checks::Pose2D> path;
+            std::size_t ahead = m_closest;
             for (std::size_t i = m_closest; i < local_plan.size(); ++i)
             {
                 const tf2::Vector3 &a = local_plan[i];
-                const tf2::Vector3 &b = local_plan[std::min(i + 1, local_plan.size() - 1)];
+                ahead = std::max(ahead, i);
+                while (ahead + 1 < local_plan.size() && (local_plan[ahead] - a).length() < m_path_heading_dist)
+                {
+                    ++ahead;
+                }
+                const tf2::Vector3 &b = local_plan[ahead];
                 const double heading = (b - a).length() > 1e-6 ? ::atan2(b.y() - a.y(), b.x() - a.x())
                                                                : (path.empty() ? yaw : path.back().yaw);
                 path.push_back({a.x(), a.y(), heading});
@@ -319,15 +357,27 @@ bool PurePursuitLocalPlanner::commandIsFree(const geometry_msgs::msg::Twist &cmd
                            checks::toString(result.collision), result.distance,
                            angles::to_degrees(std::fabs(result.angle)));
         }
-        m_blocked = true;
+        setBlocked(true);
         return false;
     }
     if (m_blocked)
     {
         RCLCPP_INFO(m_node->get_logger(), "the way is clear again");
     }
-    m_blocked = false;
+    setBlocked(false);
     return true;
+}
+
+void PurePursuitLocalPlanner::setBlocked(bool blocked)
+{
+    if (blocked != m_blocked || !m_blocked_published)
+    {
+        std_msgs::msg::Bool msg;
+        msg.data = blocked;
+        m_blocked_pub->publish(msg);
+        m_blocked_published = true;
+    }
+    m_blocked = blocked;
 }
 
 bool PurePursuitLocalPlanner::isGoalReached()
@@ -382,16 +432,22 @@ bool PurePursuitLocalPlanner::setPlan(const std::vector<geometry_msgs::msg::Pose
     m_last_time = m_node->now();
     m_first_goal_reached_time = rclcpp::Time(0, 0, RCL_ROS_TIME);
     m_is_goal_reached = false;
-    m_blocked = false;
+    setBlocked(false);
     // A replanned path while driving continues from the current motion: keep translating unless the
     // new path starts far off the heading (decided in the next control step).
     m_last_cmd_vel = geometry_msgs::msg::Twist();
+    m_have_curvature = false;
     {
         std::lock_guard<std::mutex> lock(m_odometry_mutex);
         if (m_odometry && odometryFresh(m_node->now()))
         {
             m_last_cmd_vel.linear.x = std::max(m_odometry->twist.twist.linear.x, 0.0);
             m_last_cmd_vel.angular.z = m_odometry->twist.twist.angular.z;
+            if (m_last_cmd_vel.linear.x > m_limits.trans_stopped_vel)
+            {
+                m_curvature = m_last_cmd_vel.angular.z / m_last_cmd_vel.linear.x; // the steering it has now
+                m_have_curvature = true;
+            }
         }
     }
     m_state = (m_last_cmd_vel.linear.x > m_limits.trans_stopped_vel) ? STATE_TRANSLATING : STATE_IDLE;
@@ -422,7 +478,9 @@ void PurePursuitLocalPlanner::configure(const rclcpp_lifecycle::LifecycleNode::W
     m_max_curve_vel = param<double>("max_curve_vel", 0.3);
     m_trans_acc_lim_theta = param<double>("trans_acc_lim_theta", 0.4);
     m_low_pass_gain = param<double>("low_pass_gain", 0.5);
+    m_max_curvature_rate = param<double>("max_curvature_rate", 1.0);
     m_min_stop_dist = param<double>("min_stop_dist", 0.3);
+    m_path_heading_dist = param<double>("path_heading_dist", 0.3);
     m_odom_timeout = param<double>("odom_timeout", 0.5);
     m_collision_latency = param<double>("collision_latency", 0.3);
     m_rotation_margin = param<double>("rotation_margin", 0.1);
@@ -438,6 +496,7 @@ void PurePursuitLocalPlanner::configure(const rclcpp_lifecycle::LifecycleNode::W
     m_local_plan_pub = m_node->create_publisher<nav_msgs::msg::Path>(m_name + "/local_plan", 1);
     m_default_max_vel_x = m_limits.max_vel_x;
     m_last_time = m_node->now();
+    m_blocked_pub = m_node->create_publisher<std_msgs::msg::Bool>("~/" + m_name + "/blocked", rclcpp::QoS(1).transient_local());
 
     RCLCPP_INFO(m_node->get_logger(), "base_frame=%s, local_frame=%s, max_vel_x=%.2f, max_curve_vel=%.2f",
                    m_base_frame.c_str(), m_local_frame.c_str(), m_limits.max_vel_x, m_max_curve_vel);
@@ -450,9 +509,9 @@ void PurePursuitLocalPlanner::odomCallback(const nav_msgs::msg::Odometry::ConstS
 }
 
 
-void PurePursuitLocalPlanner::cleanup() { m_odom_sub.reset(); m_local_plan_pub.reset(); m_odometry.reset(); m_global_plan.clear(); }
-void PurePursuitLocalPlanner::activate() { m_local_plan_pub->on_activate(); }
-void PurePursuitLocalPlanner::deactivate() { m_local_plan_pub->on_deactivate(); }
+void PurePursuitLocalPlanner::cleanup() { m_odom_sub.reset(); m_local_plan_pub.reset(); m_blocked_pub.reset(); m_odometry.reset(); m_global_plan.clear(); }
+void PurePursuitLocalPlanner::activate() { m_local_plan_pub->on_activate(); m_blocked_pub->on_activate(); m_blocked_published = false; setBlocked(false); }
+void PurePursuitLocalPlanner::deactivate() { setBlocked(false); m_blocked_pub->on_deactivate(); m_local_plan_pub->on_deactivate(); }
 void PurePursuitLocalPlanner::setPlan(const nav_msgs::msg::Path &path) {
     if (!setPlan(path.poses)) throw nav2_core::PlannerException("Empty controller path");
 }

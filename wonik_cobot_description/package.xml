@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>wonik_cobot_v2_description</name><version>0.3.0</version>
-  <description>Wonik QD robot: ROS 2 Humble wonik cobot v2 description.</description>
+  <name>wonik_cobot_description</name><version>0.3.0</version>
+  <description>Wonik QD and SD robot descriptions for ROS 2 Humble.</description>
   <maintainer email="wjddbsgur501@khu.ac.kr">yoonhyuck Jung</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>

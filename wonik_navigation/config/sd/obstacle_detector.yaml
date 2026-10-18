@@ -1,0 +1,24 @@
+# Obstacle detector for SD (base_footprint, the turning centre at the fork roller axle): distances to
+# the nearest obstacle in 8 corridors around the robot's bounding box (body ahead, fork behind; 0.1 m
+# wider, 3 m long), which cmd_vel_gate compares with the stopping distance at the current speed, and the
+# turn in place left each way before the footprint (footprint.yaml, loaded by navigation.launch.py) touches
+# an obstacle; obstacle heights from just above the floor to the top of the column (box z_min/z_max).
+# The front box (1.5 m from the body front) only sets obstacle_detected, for RViz.
+# The LiDAR cloud comes without the robot's own points (scan.launch.py, self_filter.yaml); if the filter
+# stops, the cloud goes stale like the LiDAR itself.
+# Required sensors must deliver current data (measurement time within timeout) or the robot stops;
+# navigation.launch.py drops the depth camera from this list with depth_camera:=false (switched off on
+# purpose, not a failure).
+required_topics: [/points_self_filtered, /camera/depth/points]
+optional_topics: []
+base_frame: base_footprint
+box: {x_min: 1.07, x_max: 2.57, y_min: -0.45, y_max: 0.45, z_min: 0.06, z_max: 1.80}
+side_margin: 0.1
+max_range: 3.0
+min_points: 5
+# A cloud with fewer finite points is no measurement (e.g. an all-NaN depth image: a real depth camera
+# also returns that for an object closer than its minimum range), so it never reads as "clear".
+# Both sensors always see the floor or walls in normal operation.
+min_valid_points: 100
+timeout: 0.5
+future_tolerance: 0.05

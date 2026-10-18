@@ -1,4 +1,6 @@
-# Humble port validation
+# Humble port validation (2026-10-17)
+
+For the current QD/SD revision, see [2026-10-18 validation](humble-sd-validation.md).
 
 Validated on 2026-10-17 with Ubuntu 22.04 / ROS 2 Humble / Gazebo Classic 11,
 running in Docker Desktop on Windows. C++17 and Python 3.10.
@@ -10,7 +12,7 @@ approximately 12:45 KST. At the user's request, the subsequent ROS 1 changes wer
 8-direction obstacle distances and speed-dependent gate fields, PurePursuit yaw-rate ramp prediction,
 StopGo corner handover, updated safety tests/docs and all six fault-injection cases.
 
-[ros1-source-snapshot.sha256](ros1-source-snapshot.sha256) records the 108 source files in the
+Commit 8bbb060 contains the 108-file ros1-source-snapshot.sha256 manifest for the
 updated snapshot captured at 13:40 KST on 2026-10-17. The older 105-file snapshot remains in commit 8c815a7.
 The original ROS 1 files were not edited by the porting work.
 
