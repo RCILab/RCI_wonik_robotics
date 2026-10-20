@@ -1,7 +1,7 @@
-# qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, joint names)
-# is loaded separately from wonik_cobot_description/config/cobot_v2/geometry.yaml.
-# PLACEHOLDER marks values that wait for the drive unit spec from Wonik; nothing here is a confirmed
-# hardware limit.
+# qd_kinematics kinematics_node parameters. Robot geometry (module_x/y, wheel_diameter, steer_limit_deg,
+# joint names) is loaded separately from wonik_cobot_description/config/cobot_v2/geometry.yaml.
+# Drive units: WDS150 (see geometry.yaml). PLACEHOLDER marks values its spec does not settle; nothing
+# marked so is a confirmed hardware limit.
 control_rate_hz: 100.0
 odom_frame: odom
 base_frame: base_footprint
@@ -17,12 +17,18 @@ joint_state_timeout_sec: 0.2
 # reset) resets odometry.
 stamp_future_tolerance_sec: 0.05
 
-# Limits. PLACEHOLDER until the drive unit spec arrives (the route controllers stay below these).
+# Limits (the route controllers stay below these).
+# PLACEHOLDER: the WDS150 spec gives no acceleration limit.
 linear_acc: 0.4
 linear_dec: 0.6
+# Steer rate command [rad/s]; the WDS150 steers at up to 2.56 rad/s.
 max_steer_vel: 1.5
-# Steer joints are continuous in simulation, so the +-(90 + 10) deg band is reachable.
-# PLACEHOLDER: the real steering range is not confirmed; set 0 if it ends at +-90 deg.
+# Drive wheel speed [m/s] = 3000 rpm motor / gear ratio i on the 150 mm wheel: 1.1775 with the chosen
+# i = 20 (the drawing also offers 34 -> 0.6925 and 68 -> 0.346). Faster commands are scaled down
+# (same path, lower speed).
+max_wheel_speed: 1.1775
+# Steering range is +-140 deg (steer_limit_deg in geometry.yaml), so the +-(90 + 10) deg band is
+# reachable; the node refuses a band wider than the range.
 steer_hysteresis_deg: 10.0
 steer_track_limit: 0.3
 creep_speed_max: 0.08

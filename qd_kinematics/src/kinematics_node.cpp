@@ -85,7 +85,9 @@ class KinematicsNode : public rclcpp::Node
         ctrl.linear_acc = declare_parameter("linear_acc", ctrl.linear_acc);
         ctrl.linear_dec = declare_parameter("linear_dec", ctrl.linear_dec);
         ctrl.max_steer_vel = declare_parameter("max_steer_vel", ctrl.max_steer_vel);
+        ctrl.max_wheel_speed = declare_parameter("max_wheel_speed", ctrl.max_wheel_speed);
         hysteresis_deg = declare_parameter("steer_hysteresis_deg", hysteresis_deg);
+        const double steer_limit_deg = declare_parameter("steer_limit_deg", 0.0);
         ctrl.steer_track_limit = declare_parameter("steer_track_limit", ctrl.steer_track_limit);
         ctrl.creep_speed_max = declare_parameter("creep_speed_max", ctrl.creep_speed_max);
         ctrl.wait_stop_timeout = declare_parameter("wait_stop_timeout", ctrl.wait_stop_timeout);
@@ -96,7 +98,15 @@ class KinematicsNode : public rclcpp::Node
         ctrl.drive_track_rel_tol = declare_parameter("drive_track_rel_tol", ctrl.drive_track_rel_tol);
         ctrl.drive_fault_time = declare_parameter("drive_fault_time", ctrl.drive_fault_time);
         ctrl.steer_hysteresis = hysteresis_deg * M_PI / 180.0;
+        ctrl.steer_limit = steer_limit_deg * M_PI / 180.0;
 
+        if (steer_limit_deg > 0.0 && 90.0 + std::max(hysteresis_deg, 0.0) > steer_limit_deg)
+        {
+            RCLCPP_ERROR(get_logger(),
+                         "steer targets reach +-(90 + steer_hysteresis_deg) = +-%.1f deg, beyond steer_limit_deg %.1f",
+                         90.0 + hysteresis_deg, steer_limit_deg);
+            return false;
+        }
         if (control_rate_hz_ <= 0.0)
         {
             RCLCPP_WARN(get_logger(), "control_rate_hz <= 0.0, using 100.0");
@@ -184,6 +194,8 @@ class KinematicsNode : public rclcpp::Node
         RCLCPP_INFO(get_logger(), "  control_rate_hz: %.1f", control_rate_hz_);
         RCLCPP_INFO(get_logger(), "  cmd_timeout_sec: %.2f, joint_state_timeout_sec: %.2f", cmd_timeout_sec_, joint_state_timeout_sec_);
         RCLCPP_INFO(get_logger(), "  steer_hysteresis_deg: %.1f", hysteresis_deg);
+        RCLCPP_INFO(get_logger(), "  steer_limit_deg: %.1f (0 = continuous), max_wheel_speed: %.3f m/s (0 = no limit)",
+                    steer_limit_deg, ctrl.max_wheel_speed);
         return true;
     }
 

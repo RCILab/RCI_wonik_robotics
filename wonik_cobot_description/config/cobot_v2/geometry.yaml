@@ -10,8 +10,13 @@ drive_type: swerve
 module_names: [front_right, rear_left]
 module_x: [0.1975, -0.1975]   # steer axes = wheel contact points in the CAD [m]
 module_y: [-0.130, 0.130]
-wheel_diameter: 0.152         # tyre diameter measured in the CAD; drive unit spec pending
-wheel_width: 0.06
+# Drive units: WDS150 steer drive wheel (WDS-LS48-400A-200A-FX1-Z1 in the CAD; drawing WDS-150-C260909,
+# received 2026-10-20). Polyurethane wheel 150 x 55 mm; steering limited to +-140 deg about angle 0
+# (wheel rolling along base x), steer motor 3000 rpm through 35 x 3.5 = 122.5 -> 2.56 rad/s.
+wheel_diameter: 0.150
+wheel_width: 0.055
+steer_limit_deg: 140.0        # 0 = continuous steering
+steer_max_vel: 2.56           # [rad/s]
 steer_joints: [front_right_steer_joint, rear_left_steer_joint]
 drive_joints: [front_right_drive_joint, rear_left_drive_joint]
 

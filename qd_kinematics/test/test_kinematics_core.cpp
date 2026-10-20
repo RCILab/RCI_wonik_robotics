@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -243,6 +244,69 @@ TEST(SteerDriveController, TricycleDrivesArc)
     EXPECT_NEAR(body.vx, 0.2, 1e-6);
     EXPECT_NEAR(body.vy, 0.0, 1e-9);
     EXPECT_NEAR(body.wz, 0.2, 1e-6);
+}
+
+TEST(SteerDriveController, LimitedSteeringMovesThroughItsRange)
+{
+    // +-140 deg steering at +130 deg, target -60 deg: the shortest way round (+170 deg, across 180)
+    // leaves the range, so the command has to go back through 0 (-190 deg).
+    auto model = std::make_shared<SwerveKinematics>(std::vector<ModulePosition>{{0.33, 0.135}, {-0.33, -0.135}});
+    ControllerParams p;
+    p.steer_limit = 140.0 * M_PI / 180.0;
+    IdealPlant plant(model, p);
+    for (auto &s : plant.state)
+    {
+        s.angle = 130.0 * M_PI / 180.0;
+    }
+    const double th = -60.0 * M_PI / 180.0;
+    double previous = plant.state[0].angle;
+    for (int k = 0; k < 2000; ++k)
+    {
+        plant.step({0.2 * std::cos(th), 0.2 * std::sin(th), 0.0}, 0.01);
+        for (const auto &s : plant.state)
+        {
+            ASSERT_LE(std::abs(s.angle), p.steer_limit + 1e-9) << "step " << k;
+        }
+        ASSERT_LE(plant.state[0].angle, previous + 1e-9) << "steer reversed at step " << k;
+        previous = plant.state[0].angle;
+    }
+    EXPECT_EQ(plant.ctrl.debugState().mode, SteerDriveController::Mode::DRIVE);
+    EXPECT_NEAR(plant.state[0].angle, th, 1e-6);
+    const Twist2D body = model->bodyTwist(plant.state);
+    EXPECT_NEAR(body.vx, 0.2 * std::cos(th), 1e-6);
+    EXPECT_NEAR(body.vy, 0.2 * std::sin(th), 1e-6);
+}
+
+TEST(SteerDriveController, WheelSpeedLimitKeepsCurvature)
+{
+    auto model = std::make_shared<SwerveKinematics>(std::vector<ModulePosition>{{0.33, 0.135}, {-0.33, -0.135}});
+    ControllerParams p;
+    p.max_wheel_speed = 0.5;
+    IdealPlant plant(model, p);
+    const Twist2D cmd{0.8, 0.0, 1.0};
+    std::vector<Vec2> v;
+    model->moduleVelocities(cmd, v);
+    double fastest = 0.0;
+    for (const auto &w : v)
+    {
+        fastest = std::max(fastest, std::hypot(w[0], w[1]));
+    }
+    ASSERT_GT(fastest, p.max_wheel_speed);
+    const double scale = p.max_wheel_speed / fastest;
+
+    for (int k = 0; k < 3000; ++k)
+    {
+        plant.step(cmd, 0.01);
+        for (const auto &s : plant.state)
+        {
+            ASSERT_LE(std::abs(s.speed), p.max_wheel_speed + 1e-9) << "step " << k;
+        }
+    }
+    EXPECT_EQ(plant.ctrl.debugState().mode, SteerDriveController::Mode::DRIVE);
+    const Twist2D body = model->bodyTwist(plant.state);
+    EXPECT_NEAR(body.vx, scale * cmd.vx, 1e-6);
+    EXPECT_NEAR(body.vy, 0.0, 1e-6);
+    EXPECT_NEAR(body.wz, scale * cmd.wz, 1e-6);
 }
 
 TEST(OdometryIntegrator, TrapezoidExactForLinearRamp)

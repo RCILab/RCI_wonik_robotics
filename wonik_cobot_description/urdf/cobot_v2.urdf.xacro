@@ -49,13 +49,15 @@
     </collision>
   </link>
 
-  <!-- QD unit: steer (continuous, position interface) + drive (continuous, velocity interface).
-       Steer frame sits on the steer axis at wheel-centre height; x = rolling direction at angle 0. -->
+  <!-- QD unit: steer (revolute within +-steer_limit_deg, position interface) + drive (continuous, velocity
+       interface). Steer frame sits on the steer axis at wheel-centre height; x = rolling direction at angle 0. -->
+  <xacro:property name="steer_limit" value="${g['steer_limit_deg'] * pi / 180.0}"/>
   <xacro:macro name="qd_unit" params="name x y">
-    <joint name="${name}_steer_joint" type="continuous">
+    <joint name="${name}_steer_joint" type="revolute">
       <origin xyz="${x} ${y} ${wheel_r}" rpy="0 0 0"/>
       <axis xyz="0 0 1"/>
       <dynamics damping="1.0"/>
+      <limit lower="${-steer_limit}" upper="${steer_limit}" effort="1000.0" velocity="${g['steer_max_vel']}"/>
       <parent link="base_link"/>
       <child link="${name}_steer_link"/>
     </joint>
@@ -211,7 +213,10 @@
     <xacro:macro name="control_modules" params="i:=0">
       <xacro:if value="${i &lt; len(g['module_names'])}">
         <joint name="${g['steer_joints'][i]}">
-          <command_interface name="position"/>
+          <command_interface name="position">
+            <param name="min">${-steer_limit}</param>
+            <param name="max">${steer_limit}</param>
+          </command_interface>
           <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
           <state_interface name="velocity"/>
         </joint>

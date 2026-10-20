@@ -214,18 +214,26 @@ double SteerDriveController::rampVelocity(double current, double target, double 
 
 double SteerDriveController::limitSteer(std::size_t i, double measured, double target, double dt)
 {
+    // A limited steering range is an interval: angles are compared directly, so the command moves through
+    // the range. Continuous steering steps along the shortest path while staying on the joint's own
+    // (possibly unwrapped) branch.
+    const bool limited = p_.steer_limit > 0.0;
+
     // Keep the command within steer_track_limit of the measured angle so it cannot run away
     // when the steer motor lags or is blocked.
-    const double lead = normalizeAngle(th_cmd_state_[i] - measured);
+    const double lead = limited ? th_cmd_state_[i] - measured : normalizeAngle(th_cmd_state_[i] - measured);
     if (std::abs(lead) > p_.steer_track_limit)
     {
         th_cmd_state_[i] = measured + std::copysign(p_.steer_track_limit, lead);
     }
 
-    // Step along the shortest path while staying on the joint's own (possibly unwrapped) branch.
-    const double diff = normalizeAngle(target - th_cmd_state_[i]);
+    const double diff = limited ? target - th_cmd_state_[i] : normalizeAngle(target - th_cmd_state_[i]);
     const double max_step = p_.max_steer_vel * dt;
     th_cmd_state_[i] += std::clamp(diff, -max_step, max_step);
+    if (limited)
+    {
+        th_cmd_state_[i] = std::clamp(th_cmd_state_[i], -p_.steer_limit, p_.steer_limit);
+    }
     return th_cmd_state_[i];
 }
 
@@ -293,6 +301,24 @@ void SteerDriveController::update(const Twist2D &cmd, const std::vector<ModuleSt
             th_target[i] = foldTarget(i, std::atan2(wheel_vel[i][1], wheel_vel[i][0]), v_target[i]);
         }
         th_target_prev_[i] = th_target[i];
+    }
+
+    // Drive wheel speed limit: all wheels scaled together, so the motion keeps its direction and curvature.
+    if (p_.max_wheel_speed > 0.0)
+    {
+        double v_fastest = 0.0;
+        for (double v : v_target)
+        {
+            v_fastest = std::max(v_fastest, std::abs(v));
+        }
+        if (v_fastest > p_.max_wheel_speed)
+        {
+            const double scale = p_.max_wheel_speed / v_fastest;
+            for (auto &v : v_target)
+            {
+                v *= scale;
+            }
+        }
     }
 
     // ---- Measurements ----

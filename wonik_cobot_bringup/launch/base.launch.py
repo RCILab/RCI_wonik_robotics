@@ -21,7 +21,8 @@ def setup(context):
         g = yaml.safe_load(f)
     with open(os.path.join(bringup, "config", robot_name, "kinematics.yaml")) as f:
         kin = yaml.safe_load(f)
-    keys = ("drive_type", "module_x", "module_y", "wheel_diameter", "steer_joints", "drive_joints", "fixed_axle_x")
+    keys = ("drive_type", "module_x", "module_y", "wheel_diameter", "steer_joints", "drive_joints", "fixed_axle_x",
+            "steer_limit_deg")
     kin.update({k: g[k] for k in keys if k in g})
     kin.update(use_sim_time=sim, publish_tf=not ekf)
     robot = xacro.process_file(os.path.join(desc, "urdf", robot_name + ".urdf.xacro"),
