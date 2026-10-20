@@ -23,10 +23,9 @@ linear_acc: 0.4
 linear_dec: 0.6
 # Steer rate command [rad/s]; the WDS150 steers at up to 2.56 rad/s.
 max_steer_vel: 1.5
-# Drive wheel speed [m/s] = 3000 rpm motor / gear ratio i on the 150 mm wheel: 1.1775 (i = 20),
-# 0.6925 (i = 34) or 0.346 (i = 68). Faster commands are scaled down (same path, lower speed).
-# PLACEHOLDER: i is left open on the drawing; 1.1775 assumes i = 20, the only ratio that allows the
-# 1.0 m/s of the route controllers.
+# Drive wheel speed [m/s] = 3000 rpm motor / gear ratio i on the 150 mm wheel: 1.1775 with the chosen
+# i = 20 (the drawing also offers 34 -> 0.6925 and 68 -> 0.346). Faster commands are scaled down
+# (same path, lower speed).
 max_wheel_speed: 1.1775
 # Steering range is +-140 deg (steer_limit_deg in geometry.yaml), so the +-(90 + 10) deg band is
 # reachable; the node refuses a band wider than the range.
