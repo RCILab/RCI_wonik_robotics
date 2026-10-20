@@ -81,10 +81,13 @@ class KinematicsNode
 
         qd_kinematics::ControllerParams ctrl;
         double hysteresis_deg = ctrl.steer_hysteresis * 180.0 / M_PI;
+        double steer_limit_deg = 0.0;
         pnh_.param("linear_acc", ctrl.linear_acc, ctrl.linear_acc);
         pnh_.param("linear_dec", ctrl.linear_dec, ctrl.linear_dec);
         pnh_.param("max_steer_vel", ctrl.max_steer_vel, ctrl.max_steer_vel);
+        pnh_.param("max_wheel_speed", ctrl.max_wheel_speed, ctrl.max_wheel_speed);
         pnh_.param("steer_hysteresis_deg", hysteresis_deg, hysteresis_deg);
+        pnh_.param("steer_limit_deg", steer_limit_deg, steer_limit_deg);
         pnh_.param("steer_track_limit", ctrl.steer_track_limit, ctrl.steer_track_limit);
         pnh_.param("creep_speed_max", ctrl.creep_speed_max, ctrl.creep_speed_max);
         pnh_.param("wait_stop_timeout", ctrl.wait_stop_timeout, ctrl.wait_stop_timeout);
@@ -95,7 +98,14 @@ class KinematicsNode
         pnh_.param("drive_track_rel_tol", ctrl.drive_track_rel_tol, ctrl.drive_track_rel_tol);
         pnh_.param("drive_fault_time", ctrl.drive_fault_time, ctrl.drive_fault_time);
         ctrl.steer_hysteresis = hysteresis_deg * M_PI / 180.0;
+        ctrl.steer_limit = steer_limit_deg * M_PI / 180.0;
 
+        if (steer_limit_deg > 0.0 && 90.0 + std::max(hysteresis_deg, 0.0) > steer_limit_deg)
+        {
+            ROS_ERROR("steer targets reach +-(90 + steer_hysteresis_deg) = +-%.1f deg, beyond steer_limit_deg %.1f",
+                      90.0 + hysteresis_deg, steer_limit_deg);
+            return false;
+        }
         if (control_rate_hz_ <= 0.0)
         {
             ROS_WARN("control_rate_hz <= 0.0, using 100.0");
@@ -183,6 +193,8 @@ class KinematicsNode
         ROS_INFO("  control_rate_hz: %.1f", control_rate_hz_);
         ROS_INFO("  cmd_timeout_sec: %.2f, joint_state_timeout_sec: %.2f", cmd_timeout_sec_, joint_state_timeout_sec_);
         ROS_INFO("  steer_hysteresis_deg: %.1f", hysteresis_deg);
+        ROS_INFO("  steer_limit_deg: %.1f (0 = continuous), max_wheel_speed: %.3f m/s (0 = no limit)", steer_limit_deg,
+                 ctrl.max_wheel_speed);
         return true;
     }
 

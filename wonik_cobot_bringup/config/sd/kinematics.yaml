@@ -21,6 +21,7 @@ stamp_future_tolerance_sec: 0.05
 linear_acc: 0.4
 linear_dec: 0.6
 max_steer_vel: 1.5
+max_wheel_speed: 0.0          # 0 = no limit
 # Steer joint is continuous in simulation, so the +-(90 + 10) deg band is reachable. Turning in place
 # needs the drive unit at +-90 deg (wheel across the body): an SD whose steering stops short of that
 # cannot turn in place, and the route controller's in-place turns would not work for it.

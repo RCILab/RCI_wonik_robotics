@@ -143,6 +143,10 @@ For the drive unit driver that replaces Gazebo (Wonik):
 - `joint_states` with the measurement time in `header.stamp` (same clock as the ROS nodes), every
   steer joint's position and every drive joint's velocity, at a steady rate (100 Hz in simulation).
 - Steer position and drive velocity interfaces as in `config/controllers.yaml`.
+- Steer angle 0 = wheel rolling along base x, within the steering range (`steer_limit_deg` in
+  `geometry.yaml`; cobot_v2's WDS150: ±140°). The WDS150 measures the steering with an incremental
+  encoder (SICK DLS40E, geared 105:21 to the slewing ring), so the driver must home it on the origin
+  switch at start-up and publish no steer position before that.
 - IMU on `/imu/data` (frame `imu_link`, mount in `geometry.yaml`) with its gyro bias removed.
 
 ## Verification
@@ -151,7 +155,7 @@ Unit tests (`catkin_make run_tests`):
 
 | Package | Covers |
 |---|---|
-| `qd_kinematics` (26) | kinematics and odometry (the 18 original tests); CREEP needs measured wheel speed, one module not driving, wheel stall in DRIVE, FAULT latched until cleared, restart after reset/clear checks measured speed, non-finite input, stamp classification |
+| `qd_kinematics` (28) | kinematics and odometry (the 18 original tests); CREEP needs measured wheel speed, one module not driving, wheel stall in DRIVE, FAULT latched until cleared, restart after reset/clear checks measured speed, non-finite input, stamp classification; steering through a limited range, wheel speed limit |
 | `local_planner_checks` (8) | turning next to a wall, commanded arc vs. path, unobserved and off-map cells, start and end poses, inflation, stopping distance, goal by actual position (goal (5, 0), robot (5, 1): not reached) |
 | `wonik_navigation` (14 + 5 rostests) | corridors and protective field, required/optional sensors, invalid frames, measurement time, gate policy; the real `route_supervisor` and `cmd_vel_gate` against a mock move_base_flex (detour planning times out, fails, is rejected, works); gate with a dead supervisor or detector, a turn stopped without a new command, a silent move_base_flex |
 

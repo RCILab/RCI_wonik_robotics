@@ -25,6 +25,15 @@ struct ControllerParams
     // hardware must reach +-(pi/2 + h).
     double steer_hysteresis{10.0 * M_PI / 180.0}; // [rad]
 
+    // Steering range: steer commands stay within [-steer_limit, steer_limit] and move through that
+    // interval, never across +-pi (the steer hardware cannot). Needs pi/2 + steer_hysteresis <=
+    // steer_limit. 0 = continuous steering, which turns the shortest way round.
+    double steer_limit{0.0}; // [rad]
+
+    // Drive wheel speed limit. A command that needs a faster wheel has every wheel speed scaled by the
+    // same factor: same steer angles and path curvature, lower speed. 0 = no limit.
+    double max_wheel_speed{0.0}; // [m/s]
+
     // Steer command is rate-limited from the last command, not from the measured angle,
     // so small per-tick steps still accumulate at high control rates. This bounds how far
     // the command may lead the measured angle.
