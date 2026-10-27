@@ -13,16 +13,6 @@ Clone this repository into the `src/` folder of a catkin workspace.
 
 | Package | Contents |
 |---|---|
-<<<<<<< HEAD
-| `qd_kinematics` | Steer-drive kinematics node (N-module swerve, single-drive tricycle). `/cmd_vel` → steer angles and wheel speeds with a stop → steer-align → creep → drive state machine (creep checked with the measured wheel speeds, time limits, latched FAULT); joint states → wheel odometry. Command and feedback timeouts, input validation. ROS-independent core with unit tests. Ported from `qd_kinematics2`. |
-| `wonik_cobot_description` | URDF/xacro and geometry of each robot: `urdf/<robot>.urdf.xacro`, `config/<robot>/geometry.yaml` (drive unit and passive wheel positions, wheel size, LiDAR, depth camera and IMU mounts), Gazebo-only tags in `urdf/<robot>.gazebo.xacro`. `cobot_v2` (QD #2 type, without the arm): meshes converted from Wonik's STEP. `sd` (single drive, pallet-truck type): **virtual model** with primitives, dimensions read off the drawing until the CAD arrives. |
-| `wonik_cobot_bringup` | One launch file per robot (`cobot_v2.launch`, `sd.launch`, both through `base.launch robot:=<robot>`) with its config in `config/<robot>/`: robot model, controller configuration, kinematics node (wheel odometry on `/wheel/odom`) and a robot_localization EKF fusing it with the IMU yaw rate into `/odom` and TF `odom → base_footprint` (`ekf:=false`: wheel odometry only). Shared by the real robot and the simulation. |
-| `wonik_gazebo` | Simulation only: one launch file per robot (`cobot_v2.launch`, `sd.launch`, through `sim.launch`: world, robot, controllers, the robot's bringup, RViz), the `qd_kinematic_base` Gazebo plugin and worlds (`empty`, `wonik_hall`: a 16 m × 10 m test hall with a central island for a U-shaped route). |
-| `wonik_navigation` | Everything per robot in `config/<robot>/`, selected with `robot:=<robot>` (default `cobot_v2`). 2D SLAM on the 3D LiDAR: `/points` → the robot's own body cut out → `pointcloud_to_laserscan` → `/scan` → `slam_toolbox` (`mapping.launch`), saved maps in `maps/`, AMCL localization on a saved map (`localization.launch`; odometry model omni for QD, diff for SD). Route following with move_base_flex (`navigation.launch`) and the route supervisor (`route.launch`, routes in `config/routes/`), with zones (`config/zones/`): obstacle detector (LiDAR + depth camera), zone manager and cmd_vel gate. |
-| `stop_go_local_planner` | Stop-and-go route follower (nav_core plugin, structured after `neo_local_planner`): straight segments, in-place rotation at corners, pure pursuit, 1.0 m/s, no obstacle avoidance (stops and waits when its motion is blocked). A missed segment end is driven out sideways (`holonomic: true`, QD) or along the heading (`false`, SD). |
-| `pure_pursuit_local_planner` | Pure pursuit follower for curved paths (nav_core plugin, structured after `neo_local_planner`), used for detours planned around obstacles; slows in curves and stops when its motion or the path ahead is blocked. |
-| `local_planner_checks` | Checks shared by both planners: swept-footprint collision checks of translations and in-place turns on the costmap (any footprint polygon, convex or not, turning about `base_footprint`; unobserved and off-map cells count as blocked), stopping distance, goal reached by actual position. |
-=======
 | `qd_kinematics` | Steer-drive kinematics for swerve (N modules) and tricycle (single drive) bases. Converts `/cmd_vel` into steer angles and wheel speeds, and `joint_states` into wheel odometry. Large steering changes go through stop → align → creep → drive. Ported from `qd_kinematics2`. |
 | `wonik_cobot_v2_description` | URDF/xacro of cobot_v2 (QD #2 type) without the arm. Meshes come from Wonik's STEP files; dimensions and sensor mounts are in `config/geometry.yaml`. |
 | `wonik_cobot_v2_bringup` | `base.launch` starts the robot model, controllers, kinematics node and an EKF that fuses wheel odometry with the IMU (`ekf:=false` turns the EKF off). Used by both the real robot and the simulation. |
@@ -31,7 +21,6 @@ Clone this repository into the `src/` folder of a catkin workspace.
 | `stop_go_local_planner` | Local planner that drives straight between waypoints and turns in place at corners. It does not avoid obstacles; it stops and waits. |
 | `pure_pursuit_local_planner` | Pure pursuit local planner for curved paths, used for detours around obstacles. |
 | `local_planner_checks` | Collision and goal checks shared by the two local planners. |
->>>>>>> a29bc0e (README: shorten package descriptions, merge Docker into Quick start)
 
 On the real robot, the Gazebo layer is replaced by the drive unit driver and an IMU driver; the other packages stay the same. Timeouts, faults and what the driver must provide are covered in [docs/safety.md](docs/safety.md).
 
