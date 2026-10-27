@@ -39,26 +39,20 @@ void SwerveKinematics::moduleVelocities(const Twist2D &twist, std::vector<Vec2> 
     velocities.resize(modules_.size());
     for (std::size_t i = 0; i < modules_.size(); ++i)
     {
-        velocities[i] = {
-            twist.vx - twist.wz * modules_[i].y, 
-            twist.vy + twist.wz * modules_[i].x
-        };
+        velocities[i] = {twist.vx - twist.wz * modules_[i].y, twist.vy + twist.wz * modules_[i].x};
     }
 }
 
 Twist2D SwerveKinematics::bodyTwist(const std::vector<ModuleState> &states) const
 {
     // Minimise sum |v_i - (v + w x r_i)|^2:
-    // w = sum (r_i - r_c) x (v_i - v_c) / sum |r_i - r_c|^2,   v = v_c - w x r_c
+    //   w = sum (r_i - r_c) x (v_i - v_c) / sum |r_i - r_c|^2,   v = v_c - w x r_c
     const std::size_t n = modules_.size();
     std::vector<Vec2> v(n);
     Vec2 v_mean{0.0, 0.0};
     for (std::size_t i = 0; i < n; ++i)
     {
-        v[i] = {
-            states[i].speed * std::cos(states[i].angle), 
-            states[i].speed * std::sin(states[i].angle)
-        };
+        v[i] = {states[i].speed * std::cos(states[i].angle), states[i].speed * std::sin(states[i].angle)};
         v_mean[0] += v[i][0];
         v_mean[1] += v[i][1];
     }
@@ -99,10 +93,7 @@ void TricycleKinematics::moduleVelocities(const Twist2D &twist, std::vector<Vec2
 {
     const Twist2D t = feasible(twist);
     velocities.resize(1);
-    velocities[0] = {
-        t.vx - t.wz * modules_[0].y,
-        t.wz * wheelbase_
-    };
+    velocities[0] = {t.vx - t.wz * modules_[0].y, t.wz * wheelbase_};
 }
 
 Twist2D TricycleKinematics::bodyTwist(const std::vector<ModuleState> &states) const

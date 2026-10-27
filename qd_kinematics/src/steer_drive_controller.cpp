@@ -188,9 +188,9 @@ double SteerDriveController::foldTarget(std::size_t i, double raw_angle, double 
     {
         return angle;
     }
-     
-    //The same wheel velocity is also reachable as (angle -+ pi, -speed). 
-    //Keep that alternative while it stays inside the widened band and is closer to the last target.    
+
+    // The same wheel velocity is also reachable as (angle -+ pi, -speed). Keep that
+    // alternative while it stays inside the widened band and is closer to the last target.
     const double alt = (angle < 0.0) ? angle + M_PI : angle - M_PI;
     const double ref = th_target_prev_[i];
     if (std::abs(alt) <= 0.5 * M_PI + p_.steer_hysteresis &&
